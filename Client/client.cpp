@@ -1,8 +1,6 @@
-// Header
+#include "client.h"
 #include <cstdio>
 
-int main(int argc, char *argv[]) {
-
-	// Hello world
+void Client::hello(void) {
 	printf("Hello, world\n");
 }

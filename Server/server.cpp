@@ -1,8 +1,6 @@
-// Header
+#include "server.h"
 #include <cstdio>
 
-int main(int argc, char *argv[]) {
-
-	// Hello world
+void Server::hello(void) {
 	printf("Hello, world\n");
 }

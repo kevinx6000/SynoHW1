@@ -1,9 +1,9 @@
 # Parameters
 CC = g++
 CFLAGS = -c -Wall
-SRCS = server.cpp
+SRCS = main.cpp server.cpp 
 OBJS = $(SRCS:.cpp=.o)
-EXEC = server
+EXEC = main
 
 # Dependency
 all: $(SRCS) $(EXEC)
