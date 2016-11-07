@@ -9,33 +9,26 @@ int main(int argc, char *argv[]) {
 
 	// Create socket
 	Client client;
-	if (!client.CreateSocket()) {
-		fprintf(stderr, "[Error] Program terminated abnormally.\n");
-		return 1;
-	}
+	if (!client.CreateSocket()) return 1;
 
 	// Connect to server
-	if (!client.Connect()) {
-		fprintf(stderr, "[Error] Program terminated abnormally.\n");
-		return 1;
-	}
+	if (!client.Connect()) return 1;
 
 	// Wait for user to input string
 	std::string input_string;
-	std::cout << "(Enter Sting): ";
+	std::cout << "(Send): ";
 	std::getline(std::cin, input_string);
 	
-	// Try to send to server
-	if (client.SendString(input_string)) {
-		
-		// TODO: Receive the echo string
-	}
+	// Send string to server
+	if (!client.SendString(input_string)) return 1;
+
+	// Receive string from server
+	std::string output_string;
+	if (!client.RecvString(output_string)) return 1;
+	std::cout << "(Recv): " << output_string << std::endl;
 
 	// Close socket
-	if (!client.CloseSocket()) {
-		fprintf(stderr, "[Error] Program terminated abnormally.\n");
-		return 1;
-	}
+	if (!client.CloseSocket()) return 1;
 
 	return 0;
 }

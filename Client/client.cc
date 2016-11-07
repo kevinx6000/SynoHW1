@@ -75,6 +75,32 @@ bool Client::SendString(std::string input_string) {
 	}
 }
 
+// Receive string from server
+bool Client::RecvString(std::string &output_string) {
+
+	// Step1. Receive the length of string
+	int strlen;
+	char token[this->kTokenLength];
+	memset(token, 0, sizeof(token));
+	if (read(this->client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
+		fprintf(stderr, "[Error] Receive string length failed.\n");
+		return false;
+	}
+	sscanf(token, "%d", &strlen);
+
+	// Step2. Receive the conent of string
+	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
+	if (read(this->client_socket_, recv_string, sizeof(char) * strlen) == -1) {
+		fprintf(stderr, "[Error] Receive string content failed.\n");
+		return false;
+	}
+	recv_string[strlen] = '\0';
+	output_string = recv_string;
+	free(recv_string);
+	return true;
+
+}
+
 // Close socket
 bool Client::CloseSocket(void) {
 	if (close(this->client_socket_) == -1) {

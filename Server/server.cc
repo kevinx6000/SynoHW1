@@ -14,7 +14,7 @@ bool Server::CreateSocket(void) {
 	// Create socket
 	this->server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
 	if (this->server_socket_ == -1) {
-		fprintf(stderr, "Create socket failed.\n");
+		perror("[Error] Create socket failed");
 		return false;
 	}
 
@@ -24,18 +24,26 @@ bool Server::CreateSocket(void) {
 	this->server_addr_.sin_addr.s_addr = INADDR_ANY;
 	this->server_addr_.sin_port = htons(9453);
 
+	// Prevent kernel hold the address used previously
+	int mark = 1;
+	if (setsockopt(this->server_socket_, SOL_SOCKET, SO_REUSEADDR, &mark,
+			sizeof(mark)) == -1) {
+		perror("[Error] Set socket option failed");
+		return false;
+	}
+
 	// Bind address
 	int bind_result = bind(this->server_socket_, (struct sockaddr *)&this->server_addr_,
 			sizeof(this->server_addr_));
 	if (bind_result == -1) {
-		fprintf(stderr, "Bind address failed\n");
+		perror("[Error] Bind address failed");
 		return false;
 	}
 
 	// Set to listen mode
 	int listen_result = listen(this->server_socket_, this->kMaxConnection);
 	if (listen_result == -1) {
-		fprintf(stderr, "Listen failed\n");
+		perror("[Error] Listen failed");
 		return false;
 	}
 
@@ -56,22 +64,22 @@ bool Server::AcceptConnection(void) {
 
 	// Check connection result
 	if (this->client_socket_ == -1) {
-		fprintf(stderr, "Accept connection failed\n");
+		perror("[Error] Accept connection failed");
 		return false;
 	} else {
 
 		// Flag: connection success
-		printf("[Info] Connection success.\n");
+		fprintf(stderr, "[Info] Connection success.\n");
 
 		// Echo client
 		if (!this->EchoString()) {
-			fprintf(stderr, "[Error] Echo string failed\n");
+			fprintf(stderr, "[Error] Echo string failed.\n");
 			return false;
 		}
 
 		// Close client connection
 		if (close(this->client_socket_) == -1) {
-			fprintf(stderr, "Close client socket failed\n");
+			perror("[Error] Close client socket failed");
 			return false;
 		}
 		return true;
@@ -86,7 +94,7 @@ bool Server::EchoString(void) {
 	char token[this->kTokenLength];
 	memset(token, 0, sizeof(token));
 	if (read(this->client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
-		fprintf(stderr, "[Error] Receive string length failed.\n");
+		perror("[Error] Receive string length failed");
 		return false;
 	}
 	sscanf(token, "%d", &strlen);
@@ -95,11 +103,26 @@ bool Server::EchoString(void) {
 	// Step2. Receive the conent of string
 	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
 	if (read(this->client_socket_, recv_string, sizeof(char) * strlen) == -1) {
-		fprintf(stderr, "[Error] Receive string content failed.\n");
-		return  false;
+		perror("[Error] Receive string content failed");
+		return false;
 	}
 	recv_string[strlen] = '\0';
 	fprintf(stderr, "[Info] String = %s\n", recv_string);
+
+	// Step3. Send back the length of string
+	if (write(this->client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
+		perror("[Error] Send back string length failed");
+		return false;
+	}
+
+	// Step4. Send back the content of string
+	if (write(this->client_socket_, recv_string, sizeof(char) * strlen) == -1) {
+		perror("[Error] Send back string content failed");
+		return false;
+	}
+	
+	// Done
+	fprintf(stderr, "[Info] String sent back.\n");
 	free(recv_string);
 	return true;
 }
@@ -107,7 +130,7 @@ bool Server::EchoString(void) {
 // Close socket
 bool Server::CloseSocket(void) {
 	if (close(this->server_socket_) == -1) {
-		fprintf(stderr, "Close socket failed\n");
+		perror("Close socket failed");
 		return false;
 	} else {
 		return true;

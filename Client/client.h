@@ -14,6 +14,7 @@ class Client {
 		bool CreateSocket(void);
 		bool Connect(void);
 		bool SendString(std::string);
+		bool RecvString(std::string &);
 		bool CloseSocket(void);
 	private:
 		int client_socket_;
