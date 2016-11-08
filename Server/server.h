@@ -24,7 +24,6 @@ class Server {
 		int current_status_;
 		struct sockaddr_in server_addr_;
 		struct sockaddr_in client_addr_;
-		const unsigned int kMaxConnection;
 };
 
 #endif

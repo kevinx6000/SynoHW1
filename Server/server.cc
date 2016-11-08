@@ -16,7 +16,7 @@ int Server::client_socket_[MAX_CLIENT];
 int Server::client_cnt_;
 
 // Constructor
-Server::Server(void) : kMaxConnection(100) {
+Server::Server(void) {
 
 	// Register signal
 	struct sigaction new_action;
@@ -69,7 +69,7 @@ bool Server::CreateSocket(void) {
 	}
 
 	// Set to listen mode
-	int listen_result = listen(server_socket_, this->kMaxConnection);
+	int listen_result = listen(server_socket_, MAX_CLIENT);
 	if (listen_result == -1) {
 		perror("[Error] Listen failed");
 		return false;
