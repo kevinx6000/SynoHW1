@@ -183,34 +183,16 @@ void *Server::ServeClient(void *para) {
 	// ID of client socket
 	int cid = *((int *)para);
 
-	// Step1. Receive the length of string
-	int strlen;
-	char token[TOKEN_LENGTH];
-	memset(token, 0, sizeof(token));
-	if (read(client_socket_[cid], token, sizeof(char) * TOKEN_LENGTH) == -1) {
-		perror("[Error] Receive string length failed");
-		exit(EXIT_FAILURE);
-	}
-	sscanf(token, "%d", &strlen);
-	fprintf(stderr, "[Info] String length = %d (client %d)\n", strlen, cid);
-
-	// Step2. Receive the conent of string
-	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
-	if (read(client_socket_[cid], recv_string, sizeof(char) * strlen) == -1) {
+	// Receive string directly
+	char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
+	if (read(client_socket_[cid], recv_string, sizeof(char) * kBufSiz) == -1) {
 		perror("[Error] Receive string content failed");
 		exit(EXIT_FAILURE);
 	}
-	recv_string[strlen] = '\0';
 	fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, cid);
 
-	// Step3. Send back the length of string
-	if (write(client_socket_[cid], token, sizeof(char) * TOKEN_LENGTH) == -1) {
-		perror("[Error] Send back string length failed");
-		exit(EXIT_FAILURE);
-	}
-
-	// Step4. Send back the content of string
-	if (write(client_socket_[cid], recv_string, sizeof(char) * strlen) == -1) {
+	// Send back string directly
+	if (write(client_socket_[cid], recv_string, sizeof(char) * kBufSiz) == -1) {
 		perror("[Error] Send back string content failed");
 		exit(EXIT_FAILURE);
 	}

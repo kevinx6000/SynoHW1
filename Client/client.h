@@ -19,8 +19,7 @@ class Client {
 		static int client_socket_;
 		struct sockaddr_in server_addr_;
 		const char *kServerIP;
-		const unsigned int kTokenLength;
-		const unsigned int kMaxStringLength;
+		const unsigned int kBufSiz;
 };
 
 #endif
