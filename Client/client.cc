@@ -8,8 +8,31 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <signal.h>
 #include <iostream>
 #include <string>
+
+// Static class members
+int Client::client_socket_;
+
+// Constructor
+Client::Client(void) :
+	kServerIP("10.13.21.117"), kTokenLength(100), kMaxStringLength((unsigned int)1e5) {
+
+	// Register signal
+	struct sigaction new_action;
+	new_action.sa_handler = this->SignalHandler;
+	sigemptyset(&new_action.sa_mask);
+	new_action.sa_flags = 0;
+	if (sigaction(SIGTERM, &new_action, NULL) < 0) {
+		perror("Register signal failed");
+		exit(EXIT_FAILURE);
+	}
+
+	// Initialize socket
+	client_socket_ = -1;
+}
+
 
 // Create socket
 bool Client::CreateSocket(void) {
@@ -17,7 +40,7 @@ bool Client::CreateSocket(void) {
 	// Create socket
 	this->client_socket_ = socket(AF_INET, SOCK_STREAM, 0);
 	if (this->client_socket_ == -1) {
-		fprintf(stderr, "[Error] Create socket failed\n");
+		perror("[Error] Create socket failed");
 		return false;
 	}
 
@@ -36,7 +59,7 @@ bool Client::Connect(void) {
 	int conn_result = connect(this->client_socket_,
 			(struct sockaddr *)&this->server_addr_, sizeof(this->server_addr_));
 	if (conn_result == -1) {
-		fprintf(stderr, "[Error] Connection failed\n");
+		perror("[Error] Connection failed");
 		return false;
 	} else {
 		return true;
@@ -57,7 +80,7 @@ bool Client::SendString(std::string input_string) {
 		memset(token, 0, sizeof(token));
 		sprintf(token, "%lu", input_string.length());
 		if (write(this->client_socket_, token, this->kTokenLength) == -1) {
-			fprintf(stderr, "[Error] String lenght sending failed\n");
+			perror("[Error] String length sending failed");
 			return false;
 		}
 
@@ -65,7 +88,7 @@ bool Client::SendString(std::string input_string) {
 		char *send_string = (char *)malloc(sizeof(char) * (input_string.length()+1));
 		sprintf(send_string, "%s", input_string.c_str());
 		if (write(this->client_socket_, send_string, input_string.length()) == -1) {
-			fprintf(stderr, "[Error] String content sending failed\n");
+			perror("[Error] String content sending failed");
 			return false;
 		}
 		free(send_string);
@@ -83,7 +106,7 @@ bool Client::RecvString(std::string &output_string) {
 	char token[this->kTokenLength];
 	memset(token, 0, sizeof(token));
 	if (read(this->client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
-		fprintf(stderr, "[Error] Receive string length failed.\n");
+		perror("[Error] Receive string length failed");
 		return false;
 	}
 	sscanf(token, "%d", &strlen);
@@ -91,7 +114,7 @@ bool Client::RecvString(std::string &output_string) {
 	// Step2. Receive the conent of string
 	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
 	if (read(this->client_socket_, recv_string, sizeof(char) * strlen) == -1) {
-		fprintf(stderr, "[Error] Receive string content failed.\n");
+		perror("[Error] Receive string content failed");
 		return false;
 	}
 	recv_string[strlen] = '\0';
@@ -104,9 +127,28 @@ bool Client::RecvString(std::string &output_string) {
 // Close socket
 bool Client::CloseSocket(void) {
 	if (close(this->client_socket_) == -1) {
-		fprintf(stderr, "[Error] Close socket failed\n");
+		perror("[Error] Close socket failed");
 		return false;
 	} else {
+		client_socket_ = -1;
 		return true;
 	}
+}
+
+// Signal handler
+void Client::SignalHandler(int signum) {
+
+	// Close socket if opened
+	if (client_socket_ != -1) {
+		if (close(client_socket_) == -1) {
+			perror("[Error] Close client socket during signal handler failed");
+			exit(EXIT_FAILURE);
+		} else {
+			fprintf(stderr, "[Info] Socket has been safely closed.\n");
+			client_socket_ = -1;
+		}
+	}
+
+	// Exit with success flag
+	exit(EXIT_SUCCESS);
 }

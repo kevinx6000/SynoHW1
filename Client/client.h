@@ -8,16 +8,15 @@
 
 class Client {
 	public:
-		Client()
-			: kServerIP("10.13.21.117"), kTokenLength(100),
-			kMaxStringLength((unsigned int)1e5) {}
+		Client(void);
 		bool CreateSocket(void);
 		bool Connect(void);
 		bool SendString(std::string);
 		bool RecvString(std::string &);
 		bool CloseSocket(void);
+		static void SignalHandler(int);
 	private:
-		int client_socket_;
+		static int client_socket_;
 		struct sockaddr_in server_addr_;
 		const char *kServerIP;
 		const unsigned int kTokenLength;
