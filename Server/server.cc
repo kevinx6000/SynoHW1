@@ -8,13 +8,15 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <signal.h>
+#include <pthread.h>
 
 // Static class members
 int Server::server_socket_;
-int Server::client_socket_;
+int Server::client_socket_[MAX_CLIENT];
+int Server::client_cnt_;
 
 // Constructor
-Server::Server(void) : kMaxConnection(100), kTokenLength(100) {
+Server::Server(void) {
 
 	// Register signal
 	struct sigaction new_action;
@@ -28,7 +30,10 @@ Server::Server(void) : kMaxConnection(100), kTokenLength(100) {
 
 	// Initialize socket
 	server_socket_ = -1;
-	client_socket_ = -1;
+	for(int i = 0; i < MAX_CLIENT; i++) {
+		client_socket_[i] = -1;
+	}
+	client_cnt_ = MAX_CLIENT;
 }
 
 // Create socket
@@ -64,7 +69,7 @@ bool Server::CreateSocket(void) {
 	}
 
 	// Set to listen mode
-	int listen_result = listen(server_socket_, this->kMaxConnection);
+	int listen_result = listen(server_socket_, MAX_CLIENT);
 	if (listen_result == -1) {
 		perror("[Error] Listen failed");
 		return false;
@@ -80,74 +85,53 @@ bool Server::CreateSocket(void) {
 // Accept connection from client
 bool Server::AcceptConnection(void) {
 
-	// Wait for connection from client (block)
-	socklen_t addrlen = sizeof(this->client_addr_);
-	client_socket_ = accept(server_socket_,
+	// Server control loop
+	while(true) {
+
+		// Polling for available client socket slot
+		while(this->client_cnt_ <= 0) {
+			fprintf(stderr, "[Info] # of client reached maximum...sleep 3 secs\n");
+			sleep(3);
+		}
+
+		// Allocate one client socket
+		int cid = -1;
+		for(int i = 0; i < MAX_CLIENT; i++) {
+			if (client_socket_[i] == -1) {
+				cid = i;
+				break;
+			}
+		}
+		if (cid == -1) {
+			fprintf(stderr, "[Error] No remaining client socket found\n");
+			exit(EXIT_FAILURE);
+		}
+
+		// Waiting for connection from client
+		fprintf(stderr, "[Info] Waiting for connection from client...\n");
+		socklen_t addrlen = sizeof(this->client_addr_);
+		client_socket_[cid] = accept(server_socket_,
 			(struct sockaddr *)&this->client_addr_, &addrlen);
 
-	// Check connection result
-	if (client_socket_ == -1) {
-		perror("[Error] Accept connection failed");
-		return false;
-	} else {
-
-		// Flag: connection success
-		fprintf(stderr, "[Info] Connection success.\n");
-
-		// Echo client
-		if (!this->EchoString()) {
-			fprintf(stderr, "[Error] Echo string failed.\n");
+		// Check connection result
+		if (client_socket_[cid] == -1) {
+			perror("[Error] Accept connection failed");
 			return false;
+		} else {
+
+			// Flag: connection success
+			client_cnt_--;
+			fprintf(stderr, "[Info] Connection success for client %d.\n", cid);
+
+			// Create a thread to serve client
+			int tmpID = cid;
+			pthread_t pid;
+			if (pthread_create(&pid, NULL, ServeClient, (void *)&tmpID) != 0) {
+				perror("Thread create failed");
+				exit(EXIT_FAILURE);
+			}
 		}
-
-		// Close client connection
-		if (close(client_socket_) == -1) {
-			perror("[Error] Close client socket failed");
-			return false;
-		}
-		client_socket_ = -1;
-		return true;
 	}
-}
-
-// Echo string from client
-bool Server::EchoString(void) {
-
-	// Step1. Receive the length of string
-	int strlen;
-	char token[this->kTokenLength];
-	memset(token, 0, sizeof(token));
-	if (read(client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
-		perror("[Error] Receive string length failed");
-		return false;
-	}
-	sscanf(token, "%d", &strlen);
-	fprintf(stderr, "[Info] String length = %d\n", strlen);
-
-	// Step2. Receive the conent of string
-	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
-	if (read(client_socket_, recv_string, sizeof(char) * strlen) == -1) {
-		perror("[Error] Receive string content failed");
-		return false;
-	}
-	recv_string[strlen] = '\0';
-	fprintf(stderr, "[Info] String = %s\n", recv_string);
-
-	// Step3. Send back the length of string
-	if (write(client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
-		perror("[Error] Send back string length failed");
-		return false;
-	}
-
-	// Step4. Send back the content of string
-	if (write(client_socket_, recv_string, sizeof(char) * strlen) == -1) {
-		perror("[Error] Send back string content failed");
-		return false;
-	}
-	
-	// Done
-	fprintf(stderr, "[Info] String sent back.\n");
-	free(recv_string);
 	return true;
 }
 
@@ -165,16 +149,20 @@ bool Server::CloseSocket(void) {
 // Signal handler
 void Server::SignalHandler(int signum) {
 
-	// Close socket if opened
-	if (client_socket_ != -1) {
-		if (close(client_socket_) == -1) {
-			perror("[Error] Close client socket during signal handler failed");
-			exit(EXIT_FAILURE);
-		} else {
-			fprintf(stderr, "[Info] Client socket has been safely closed.\n");
-			client_socket_ = -1;
+	// Close all client sockets
+	for(int i = 0; i < MAX_CLIENT; i++) {
+		if (client_socket_[i] != -1) {
+			if (close(client_socket_[i]) == -1) {
+				perror("[Error] Close client socket during signal handler failed");
+				exit(EXIT_FAILURE);
+			} else {
+				fprintf(stderr, "[Info] Client socket %d has been safely closed.\n", i);
+				client_socket_[i] = -1;
+			}
 		}
 	}
+	
+	// Close server socket
 	if (server_socket_ != -1) {
 		if (close(server_socket_) == -1) {
 			perror("[Error] Close server socket during signal handler failed");
@@ -187,4 +175,54 @@ void Server::SignalHandler(int signum) {
 
 	// Exit with success flag
 	exit(EXIT_SUCCESS);
+}
+
+// Thread function to serve client
+void *Server::ServeClient(void *para) {
+
+	// ID of client socket
+	int cid = *((int *)para);
+
+	// Step1. Receive the length of string
+	int strlen;
+	char token[TOKEN_LENGTH];
+	memset(token, 0, sizeof(token));
+	if (read(client_socket_[cid], token, sizeof(char) * TOKEN_LENGTH) == -1) {
+		perror("[Error] Receive string length failed");
+		exit(EXIT_FAILURE);
+	}
+	sscanf(token, "%d", &strlen);
+	fprintf(stderr, "[Info] String length = %d (client %d)\n", strlen, cid);
+
+	// Step2. Receive the conent of string
+	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
+	if (read(client_socket_[cid], recv_string, sizeof(char) * strlen) == -1) {
+		perror("[Error] Receive string content failed");
+		exit(EXIT_FAILURE);
+	}
+	recv_string[strlen] = '\0';
+	fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, cid);
+
+	// Step3. Send back the length of string
+	if (write(client_socket_[cid], token, sizeof(char) * TOKEN_LENGTH) == -1) {
+		perror("[Error] Send back string length failed");
+		exit(EXIT_FAILURE);
+	}
+
+	// Step4. Send back the content of string
+	if (write(client_socket_[cid], recv_string, sizeof(char) * strlen) == -1) {
+		perror("[Error] Send back string content failed");
+		exit(EXIT_FAILURE);
+	}
+	
+	// Done
+	fprintf(stderr, "[Info] String sent back (client %d)\n", cid);
+	free(recv_string);
+	if (close(client_socket_[cid]) == -1) {
+		perror("[Error] Close client socket failed");
+		exit(EXIT_FAILURE);
+	}
+	client_socket_[cid] = -1;
+	client_cnt_++;
+	return NULL;
 }
