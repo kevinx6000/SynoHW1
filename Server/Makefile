@@ -9,7 +9,7 @@ EXEC = main
 all: $(SRCS) $(EXEC)
 
 $(EXEC): $(OBJS)
-	$(CC) $(OBJS) -o $@
+	$(CC) $(OBJS) -o $@ -lpthread
 
 .cc.o:
 	$(CC) $(CFLAGS) -o $@ $<
