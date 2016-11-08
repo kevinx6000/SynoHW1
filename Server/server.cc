@@ -27,16 +27,16 @@ Server::Server(void) : kMaxConnection(100), kTokenLength(100) {
 	}
 
 	// Initialize socket
-	this->server_socket_ = -1;
-	this->client_socket_ = -1;
+	server_socket_ = -1;
+	client_socket_ = -1;
 }
 
 // Create socket
 bool Server::CreateSocket(void) {
 
 	// Create socket
-	this->server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
-	if (this->server_socket_ == -1) {
+	server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_socket_ == -1) {
 		perror("[Error] Create socket failed");
 		return false;
 	}
@@ -49,14 +49,14 @@ bool Server::CreateSocket(void) {
 
 	// Prevent kernel hold the address used previously
 	int mark = 1;
-	if (setsockopt(this->server_socket_, SOL_SOCKET, SO_REUSEADDR, &mark,
+	if (setsockopt(server_socket_, SOL_SOCKET, SO_REUSEADDR, &mark,
 			sizeof(mark)) == -1) {
 		perror("[Error] Set socket option failed");
 		return false;
 	}
 
 	// Bind address
-	int bind_result = bind(this->server_socket_, (struct sockaddr *)&this->server_addr_,
+	int bind_result = bind(server_socket_, (struct sockaddr *)&this->server_addr_,
 			sizeof(this->server_addr_));
 	if (bind_result == -1) {
 		perror("[Error] Bind address failed");
@@ -64,7 +64,7 @@ bool Server::CreateSocket(void) {
 	}
 
 	// Set to listen mode
-	int listen_result = listen(this->server_socket_, this->kMaxConnection);
+	int listen_result = listen(server_socket_, this->kMaxConnection);
 	if (listen_result == -1) {
 		perror("[Error] Listen failed");
 		return false;
@@ -82,11 +82,11 @@ bool Server::AcceptConnection(void) {
 
 	// Wait for connection from client (block)
 	socklen_t addrlen = sizeof(this->client_addr_);
-	this->client_socket_ = accept(this->server_socket_,
+	client_socket_ = accept(server_socket_,
 			(struct sockaddr *)&this->client_addr_, &addrlen);
 
 	// Check connection result
-	if (this->client_socket_ == -1) {
+	if (client_socket_ == -1) {
 		perror("[Error] Accept connection failed");
 		return false;
 	} else {
@@ -101,11 +101,11 @@ bool Server::AcceptConnection(void) {
 		}
 
 		// Close client connection
-		if (close(this->client_socket_) == -1) {
+		if (close(client_socket_) == -1) {
 			perror("[Error] Close client socket failed");
 			return false;
 		}
-		this->client_socket_ = -1;
+		client_socket_ = -1;
 		return true;
 	}
 }
@@ -117,7 +117,7 @@ bool Server::EchoString(void) {
 	int strlen;
 	char token[this->kTokenLength];
 	memset(token, 0, sizeof(token));
-	if (read(this->client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
+	if (read(client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
 		perror("[Error] Receive string length failed");
 		return false;
 	}
@@ -126,7 +126,7 @@ bool Server::EchoString(void) {
 
 	// Step2. Receive the conent of string
 	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
-	if (read(this->client_socket_, recv_string, sizeof(char) * strlen) == -1) {
+	if (read(client_socket_, recv_string, sizeof(char) * strlen) == -1) {
 		perror("[Error] Receive string content failed");
 		return false;
 	}
@@ -134,13 +134,13 @@ bool Server::EchoString(void) {
 	fprintf(stderr, "[Info] String = %s\n", recv_string);
 
 	// Step3. Send back the length of string
-	if (write(this->client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
+	if (write(client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
 		perror("[Error] Send back string length failed");
 		return false;
 	}
 
 	// Step4. Send back the content of string
-	if (write(this->client_socket_, recv_string, sizeof(char) * strlen) == -1) {
+	if (write(client_socket_, recv_string, sizeof(char) * strlen) == -1) {
 		perror("[Error] Send back string content failed");
 		return false;
 	}
@@ -153,11 +153,11 @@ bool Server::EchoString(void) {
 
 // Close socket
 bool Server::CloseSocket(void) {
-	if (close(this->server_socket_) == -1) {
+	if (close(server_socket_) == -1) {
 		perror("Close socket failed");
 		return false;
 	} else {
-		this->server_socket_ = -1;
+		server_socket_ = -1;
 		return true;
 	}
 }
