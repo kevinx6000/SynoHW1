@@ -7,14 +7,16 @@
 
 class Server {
 	public:
-		Server() : kMaxConnection(100), kTokenLength(100) {}
+		Server(void);
 		bool CreateSocket(void);
 		bool AcceptConnection(void);
 		bool EchoString(void);
 		bool CloseSocket(void);
+		static void SignalHandler(int);
 	private:
-		int server_socket_;
-		int client_socket_;
+		static int server_socket_;
+		static int client_socket_;
+		int current_status_;
 		struct sockaddr_in server_addr_;
 		struct sockaddr_in client_addr_;
 		const unsigned int kMaxConnection;

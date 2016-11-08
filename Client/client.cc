@@ -57,7 +57,7 @@ bool Client::SendString(std::string input_string) {
 		memset(token, 0, sizeof(token));
 		sprintf(token, "%lu", input_string.length());
 		if (write(this->client_socket_, token, this->kTokenLength) == -1) {
-			fprintf(stderr, "[Error] String lenght sending failed\n");
+			fprintf(stderr, "[Error] String length sending failed\n");
 			return false;
 		}
 

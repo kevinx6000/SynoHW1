@@ -7,6 +7,29 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <signal.h>
+
+// Static class members
+int Server::server_socket_;
+int Server::client_socket_;
+
+// Constructor
+Server::Server(void) : kMaxConnection(100), kTokenLength(100) {
+
+	// Register signal
+	struct sigaction new_action;
+	new_action.sa_handler = this->SignalHandler;
+	sigemptyset(&new_action.sa_mask);
+	new_action.sa_flags = 0;
+	if (sigaction(SIGTERM, &new_action, NULL) < 0) {
+		perror("Register signal failed");
+		exit(EXIT_FAILURE);
+	}
+
+	// Initialize socket
+	this->server_socket_ = -1;
+	this->client_socket_ = -1;
+}
 
 // Create socket
 bool Server::CreateSocket(void) {
@@ -82,6 +105,7 @@ bool Server::AcceptConnection(void) {
 			perror("[Error] Close client socket failed");
 			return false;
 		}
+		this->client_socket_ = -1;
 		return true;
 	}
 }
@@ -133,6 +157,34 @@ bool Server::CloseSocket(void) {
 		perror("Close socket failed");
 		return false;
 	} else {
+		this->server_socket_ = -1;
 		return true;
 	}
+}
+
+// Signal handler
+void Server::SignalHandler(int signum) {
+
+	// Close socket if opened
+	if (client_socket_ != -1) {
+		if (close(client_socket_) == -1) {
+			perror("[Error] Close client socket during signal handler failed");
+			exit(EXIT_FAILURE);
+		} else {
+			fprintf(stderr, "[Info] Client socket has been safely closed.\n");
+			client_socket_ = -1;
+		}
+	}
+	if (server_socket_ != -1) {
+		if (close(server_socket_) == -1) {
+			perror("[Error] Close server socket during signal handler failed");
+			exit(EXIT_FAILURE);
+		} else {
+			fprintf(stderr, "[Info] Server socket has been safely closed.\n");
+			server_socket_ = -1;
+		}
+	}
+
+	// Exit with success flag
+	exit(EXIT_SUCCESS);
 }
