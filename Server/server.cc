@@ -124,9 +124,10 @@ bool Server::AcceptConnection(void) {
 			fprintf(stderr, "[Info] Connection success for client %d.\n", cid);
 
 			// Create a thread to serve client
-			int tmpID = cid;
+			int *tmpID = (int *)malloc(sizeof(int));
+			*tmpID = cid;
 			pthread_t pid;
-			if (pthread_create(&pid, NULL, ServeClient, (void *)&tmpID) != 0) {
+			if (pthread_create(&pid, NULL, ServeClient, (void *)tmpID) != 0) {
 				perror("Thread create failed");
 				exit(EXIT_FAILURE);
 			}
@@ -182,6 +183,7 @@ void *Server::ServeClient(void *para) {
 
 	// ID of client socket
 	int cid = *((int *)para);
+	free(para);
 
 	// Receive string directly
 	char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
