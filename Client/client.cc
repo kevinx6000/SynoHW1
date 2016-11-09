@@ -17,7 +17,7 @@ int Client::client_socket_;
 
 // Constructor
 Client::Client(void) :
-	kServerIP("10.13.21.117"), kTokenLength(100), kMaxStringLength((unsigned int)1e5) {
+	kServerIP("10.13.21.117"), kBufSiz(16383) {
 
 	// Register signal
 	struct sigaction new_action;
@@ -70,24 +70,15 @@ bool Client::Connect(void) {
 bool Client::SendString(std::string input_string) {
 
 	// Check string length
-	if (input_string.length() >= this->kMaxStringLength) {
+	if (input_string.length() >= this->kBufSiz) {
 		fprintf(stderr, "[Error] Length of input string is too long.\n");
 		return false;
 	} else {
 
-		// Step1. Send string length to server
-		char token[this->kTokenLength];
-		memset(token, 0, sizeof(token));
-		sprintf(token, "%lu", input_string.length());
-		if (write(this->client_socket_, token, this->kTokenLength) == -1) {
-			perror("[Error] String length sending failed");
-			return false;
-		}
-
-		// Step2. Send the actual string
-		char *send_string = (char *)malloc(sizeof(char) * (input_string.length()+1));
+		// Send string directly
+		char *send_string = (char *)calloc(this->kBufSiz, sizeof(char));
 		sprintf(send_string, "%s", input_string.c_str());
-		if (write(this->client_socket_, send_string, input_string.length()) == -1) {
+		if (write(this->client_socket_, send_string, sizeof(char) * this->kBufSiz) == -1) {
 			perror("[Error] String content sending failed");
 			return false;
 		}
@@ -101,23 +92,12 @@ bool Client::SendString(std::string input_string) {
 // Receive string from server
 bool Client::RecvString(std::string &output_string) {
 
-	// Step1. Receive the length of string
-	int strlen;
-	char token[this->kTokenLength];
-	memset(token, 0, sizeof(token));
-	if (read(this->client_socket_, token, sizeof(char) * this->kTokenLength) == -1) {
-		perror("[Error] Receive string length failed");
-		return false;
-	}
-	sscanf(token, "%d", &strlen);
-
-	// Step2. Receive the conent of string
-	char *recv_string = (char *)malloc(sizeof(char) * (strlen+1));
-	if (read(this->client_socket_, recv_string, sizeof(char) * strlen) == -1) {
+	// Receive string directly
+	char *recv_string = (char *)calloc(this->kBufSiz, sizeof(char));
+	if (read(this->client_socket_, recv_string, sizeof(char) * this->kBufSiz) == -1) {
 		perror("[Error] Receive string content failed");
 		return false;
 	}
-	recv_string[strlen] = '\0';
 	output_string = recv_string;
 	free(recv_string);
 	return true;

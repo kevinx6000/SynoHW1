@@ -2,7 +2,7 @@
 #define HW1_SERVER_SERVER_H_
 
 #define MAX_CLIENT 10002
-#define TOKEN_LENGTH 100
+#define kBufSiz 16383
 
 #include <sys/types.h>
 #include <sys/socket.h>
