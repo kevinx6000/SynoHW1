@@ -11,11 +11,15 @@
 #include <signal.h>
 #include <pthread.h>
 #include <map>
+#include <queue>
 
 // Static class members
 int Server::server_socket_;
 std::map<unsigned int, bool> Server::is_alive_;
+std::queue<int> Server::client_que_;
 pthread_mutex_t Server::map_mutex_;
+pthread_mutex_t Server::que_mutex_;
+pthread_cond_t Server::que_not_empty_;
 
 // Constructor
 Server::Server(void) {
@@ -34,6 +38,8 @@ Server::Server(void) {
 	server_socket_ = -1;
 	is_alive_.clear();
 	pthread_mutex_init(&map_mutex_, NULL);
+	pthread_mutex_init(&que_mutex_, NULL);
+	pthread_cond_init(&que_not_empty_, NULL);
 }
 
 // Create socket
@@ -85,6 +91,15 @@ bool Server::CreateSocket(void) {
 
 // Accept connection from client
 bool Server::AcceptConnection(void) {
+
+	// Create MAX_THREAD threads
+	pthread_t pid;
+	for (int i = 0; i < MAX_THREAD; i++) {
+		if (pthread_create(&pid, NULL, ServeClient, (void *)&i) != 0) {
+			perror("[Error] Thread create failed");
+			exit(EXIT_FAILURE);
+		}
+	}
 	
 	// Create epoll
 	int epoll_fd = epoll_create1(0);
@@ -138,7 +153,7 @@ bool Server::AcceptConnection(void) {
 				}
 				fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
 
-				// Mutex lock
+				// Update alive mark
 				pthread_mutex_lock(&map_mutex_);
 				is_alive_[client_socket] = true;
 				pthread_mutex_unlock(&map_mutex_);
@@ -146,15 +161,11 @@ bool Server::AcceptConnection(void) {
 			// Client socket ready
 			} else {
 
-				// Create a thread to handle this client
-				fprintf(stderr, "[Info] Client %d is ready.\n", events[i].data.fd);
-				int *curID = (int *)malloc(sizeof(int));
-				*curID = events[i].data.fd;
-				pthread_t pid;
-				if (pthread_create(&pid, NULL, ServeClient, (void *)curID) != 0) {
-					perror("[Error] Thread create failed");
-					exit(EXIT_FAILURE);
-				}
+				// Push client fd into queue, and signal
+				pthread_mutex_lock(&que_mutex_);
+				client_que_.push(events[i].data.fd);
+				pthread_cond_signal(&que_not_empty_);
+				pthread_mutex_unlock(&que_mutex_);
 			}
 		}
 	}
@@ -202,8 +213,10 @@ void Server::SignalHandler(int signum) {
 		}
 	}
 
-	// Destroy mutex
+	// Destroy mutex and conditional variable
 	pthread_mutex_destroy(&map_mutex_);
+	pthread_mutex_destroy(&que_mutex_);
+	pthread_cond_destroy(&que_not_empty_);
 
 	// Exit with success flag
 	exit(EXIT_SUCCESS);
@@ -211,44 +224,60 @@ void Server::SignalHandler(int signum) {
 
 // Thread function to serve client
 void *Server::ServeClient(void *para) {
+	int tid = *((int *)para);
 
-	// ID of client socket
-	int cid = *((int *)para);
-	free(para);
-	fprintf(stderr, "[Info] Client %d is handled by thread.\n", cid);
+	// Thread loop (endless)
+	while (true) {
 
-	// Receive string directly
-	char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
-	int read_len = read(cid, recv_string, sizeof(char) * kBufSiz);
-	if (read_len == -1) {
-		perror("[Error] Receive string content failed");
-		exit(EXIT_FAILURE);
-	}
+		// Lock mutex: get access to client queue
+		pthread_mutex_lock(&que_mutex_);
 
-	// Client really sent string (not disconnect)
-	if (read_len > 0) {
-		fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, cid);
+		// Check if queue is empty, and wait if so
+		while (client_que_.empty()) {
+			pthread_cond_wait(&que_not_empty_, &que_mutex_);
+		}
 
-		// Send back string directly
-		if (write(cid, recv_string, sizeof(char) * kBufSiz) == -1) {
-			perror("[Error] Send back string content failed");
+		// Queue is not empty, extract one client socket
+		int client_fd = client_que_.front();
+		client_que_.pop();
+
+		// Unlock mutex: free access to everyone
+		pthread_mutex_unlock(&que_mutex_);
+
+		// Serve this client
+		// Receive string directly
+		char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
+		int read_len = read(client_fd, recv_string, sizeof(char) * kBufSiz);
+		if (read_len == -1) {
+			perror("[Error] Receive string content failed");
 			exit(EXIT_FAILURE);
 		}
-		fprintf(stderr, "[Info] String sent back (client %d)\n", cid);
-	} else {
-		fprintf(stderr, "[Info] Client %d is probably disconnected.\n", cid);
-	}
-	
-	// Done
-	free(recv_string);
-	if (close(cid) == -1) {
-		perror("[Error] Close client socket failed");
-		exit(EXIT_FAILURE);
-	}
 
-	// Mutex lock
-	pthread_mutex_lock(&map_mutex_);
-	is_alive_[cid] = false;
-	pthread_mutex_unlock(&map_mutex_);
-	return NULL;
+		// Client really sent string (not disconnect)
+		if (read_len > 0) {
+			fprintf(stderr, "[Info] (%d) String = %s (client %d)\n", tid, recv_string, client_fd);
+
+			// Send back string directly
+			if (write(client_fd, recv_string, sizeof(char) * kBufSiz) == -1) {
+				perror("[Error] Send back string content failed");
+				exit(EXIT_FAILURE);
+			}
+			fprintf(stderr, "[Info] (%d) String sent back (client %d)\n", tid, client_fd);
+		} else {
+			fprintf(stderr, "[Info] Client %d is probably disconnected.\n", client_fd);
+		}
+
+		// Done
+		free(recv_string);
+		if (close(client_fd) == -1) {
+			perror("[Error] Close client socket failed");
+			exit(EXIT_FAILURE);
+		}
+
+		// Update alive mark
+		pthread_mutex_lock(&map_mutex_);
+		is_alive_[client_fd] = false;
+		pthread_mutex_unlock(&map_mutex_);
+	}
+	pthread_exit(NULL);
 }
