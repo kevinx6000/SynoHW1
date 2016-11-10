@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <map>
 
 class Server {
@@ -22,6 +23,7 @@ class Server {
 	private:
 		static int server_socket_;
 		static std::map<unsigned int, bool>is_alive_;
+		static pthread_mutex_t map_mutex_;
 };
 
 #endif

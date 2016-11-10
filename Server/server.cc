@@ -15,6 +15,7 @@
 // Static class members
 int Server::server_socket_;
 std::map<unsigned int, bool> Server::is_alive_;
+pthread_mutex_t Server::map_mutex_;
 
 // Constructor
 Server::Server(void) {
@@ -32,6 +33,7 @@ Server::Server(void) {
 	// Initialize
 	server_socket_ = -1;
 	is_alive_.clear();
+	pthread_mutex_init(&map_mutex_, NULL);
 }
 
 // Create socket
@@ -134,9 +136,12 @@ bool Server::AcceptConnection(void) {
 					perror("[Error] epoll_ctl: client socket");
 					exit(EXIT_FAILURE);
 				}
-				// TODO: Mutex
-				is_alive_[client_socket] = true;
 				fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
+
+				// Mutex lock
+				pthread_mutex_lock(&map_mutex_);
+				is_alive_[client_socket] = true;
+				pthread_mutex_unlock(&map_mutex_);
 
 			// Client socket ready
 			} else {
@@ -162,6 +167,8 @@ bool Server::CloseSocket(void) {
 		perror("[Error] Close socket failed");
 		return false;
 	} else {
+		// Destroy mutex
+		pthread_mutex_destroy(&map_mutex_);
 		server_socket_ = -1;
 		return true;
 	}
@@ -194,6 +201,9 @@ void Server::SignalHandler(int signum) {
 			fprintf(stderr, "[Info] Server socket closed safely.\n");
 		}
 	}
+
+	// Destroy mutex
+	pthread_mutex_destroy(&map_mutex_);
 
 	// Exit with success flag
 	exit(EXIT_SUCCESS);
@@ -235,7 +245,10 @@ void *Server::ServeClient(void *para) {
 		perror("[Error] Close client socket failed");
 		exit(EXIT_FAILURE);
 	}
-	// TODO: Mutex
+
+	// Mutex lock
+	pthread_mutex_lock(&map_mutex_);
 	is_alive_[cid] = false;
+	pthread_mutex_unlock(&map_mutex_);
 	return NULL;
 }
