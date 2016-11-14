@@ -16,19 +16,28 @@
 class Server {
 	public:
 		Server(void);
+		Server(int);
+		Server(const Server &);
+		Server &operator=(const Server &);
+		void Initialize(int);
 		bool CreateSocket(void);
 		bool AcceptConnection(void);
 		bool EchoString(void);
 		bool CloseSocket(void);
+		~Server(void);
+		static bool RegisterSignal(void);
 		static void SignalHandler(int);
 		static void *ServeClient(void *);
 	private:
-		static int server_socket_;
-		static std::map<unsigned int, bool>is_alive_;
-		static std::queue<int>client_que_;
-		static pthread_mutex_t map_mutex_;
-		static pthread_mutex_t que_mutex_;
-		static pthread_cond_t que_not_empty_;
+		int port_;
+		int server_socket_;
+		static bool is_sigterm_;
+		std::map<unsigned int, bool> is_alive_;
+		std::queue<int> client_que_;
+		pthread_mutex_t map_mutex_;
+		pthread_mutex_t que_mutex_;
+		pthread_cond_t que_not_empty_;
+		pthread_t pid[MAX_THREAD];
 };
 
 #endif
