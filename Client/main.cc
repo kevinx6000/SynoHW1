@@ -14,6 +14,11 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
+	// Register signal
+	if (!client.RegisterSignal()) {
+		exit(EXIT_FAILURE);
+	}
+
 	// Connect to server
 	if (!client.Connect()) {
 		exit(EXIT_FAILURE);
@@ -23,15 +28,10 @@ int main(int argc, char *argv[]) {
 	std::string input_string;
 	std::cout << "(Send): ";
 	std::getline(std::cin, input_string);
-	
-	// Send string to server
-	if (!client.SendString(input_string)) {
-		exit(EXIT_FAILURE);
-	}
 
-	// Receive string from server
+	// Send to server and receiver from server
 	std::string output_string;
-	if (!client.RecvString(output_string)) {
+	if (!client.SendAndRecv(input_string, output_string)) {
 		exit(EXIT_FAILURE);
 	}
 	std::cout << "(Recv): " << output_string << std::endl;

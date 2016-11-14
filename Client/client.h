@@ -6,20 +6,35 @@
 #include <netinet/in.h>
 #include <string>
 
+#define kBufSiz 16383
+
 class Client {
 	public:
 		Client(void);
+		Client(const int);
+		Client(const char *);
+		Client(const char *, const int);
+		Client(const Client &);
+		Client &operator=(const Client &);
+		void Initialize(const char *, const int);
 		bool CreateSocket(void);
 		bool Connect(void);
-		bool SendString(std::string);
-		bool RecvString(std::string &);
+		bool SendAndRecv(const std::string &, std::string &);
 		bool CloseSocket(void);
+		~Client(void);
+		static bool RegisterSignal(void);
 		static void SignalHandler(int);
+
 	private:
-		static int client_socket_;
+		int client_socket_;
+		int server_port_;
+		char *server_IP_;
 		struct sockaddr_in server_addr_;
-		const char *kServerIP;
-		const unsigned int kBufSiz;
+		static bool is_sigterm_;
+
+		// Only accessible to member functions
+		bool SendString(const std::string);
+		bool RecvString(std::string &);
 };
 
 #endif
