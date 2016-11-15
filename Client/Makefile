@@ -1,8 +1,8 @@
 # Parameters
 CC = g++
 CFLAGS = -c -Wall
-SRCS = main.cc client.cc
-OBJS = $(SRCS:.cc=.o)
+SRCS = main.cpp client.cpp
+OBJS = $(SRCS:.cpp=.o)
 EXEC = main
 
 # Dependency
@@ -11,7 +11,7 @@ all: $(SRCS) $(EXEC)
 $(EXEC): $(OBJS)
 	$(CC) $(OBJS) -o $@
 
-.cc.o:
+.cpp.o:
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:

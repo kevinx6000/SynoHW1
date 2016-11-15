@@ -1,8 +1,8 @@
 # Parameters
 CC = g++
 CFLAGS = -c -Wall -std=c++11
-SRCS = main.cc server.cc
-OBJS = $(SRCS:.cc=.o)
+SRCS = main.cpp server.cpp
+OBJS = $(SRCS:.cpp=.o)
 EXEC = main
 
 # Dependency
@@ -11,7 +11,7 @@ all: $(SRCS) $(EXEC)
 $(EXEC): $(OBJS)
 	$(CC) $(OBJS) -o $@ -lpthread
 
-.cc.o:
+.cpp.o:
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
