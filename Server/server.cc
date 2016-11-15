@@ -13,9 +13,6 @@
 #include <map>
 #include <queue>
 
-// Static class members
-bool Server::is_sigterm_;
-
 // Constructor
 Server::Server(void) {
 	this->Initialize(9453);
@@ -24,11 +21,16 @@ Server::Server(int port) {
 	this->Initialize(port);
 }
 
+// Set abort flag
+void Server::SetAbortFlag(bool cur_flag) {
+	this->abort_flag_ = cur_flag;
+}
+
 // Initialize
 void Server::Initialize(int port) {
 
 	// Initialize variables
-	is_sigterm_ = false;
+	this->abort_flag_ = false;
 	this->server_socket_ = -1;
 	this->is_alive_.clear();
 	this->port_ = port;
@@ -119,17 +121,17 @@ bool Server::AcceptConnection(void) {
 	struct epoll_event events[MAX_EVENT];
 	struct sockaddr_in client_addr;
 	socklen_t addrlen = sizeof(client_addr);
-	while(!is_sigterm_) {
+	while(!abort_flag_) {
 
 		// Wait until some fd is ready
-		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, -1);
-		if (numFD == -1 && !is_sigterm_) {
+		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 3000);
+		if (numFD == -1 && !abort_flag_) {
 			perror("[Error] epoll_wait");
 			return false;
 		}
 
 		// Process all ready events
-		for(int i = 0; i < numFD && !is_sigterm_; i++) {
+		for(int i = 0; i < numFD && !abort_flag_; i++) {
 			
 			// Server socket event
 			if (events[i].data.fd == this->server_socket_) {
@@ -229,33 +231,13 @@ bool Server::CloseSocket(void) {
 	return true;
 }
 
-// Register signal
-bool Server::RegisterSignal(void) {
-	struct sigaction new_action;
-	new_action.sa_handler = SignalHandler;
-	sigemptyset(&new_action.sa_mask);
-	new_action.sa_flags = 0;
-	if (sigaction(SIGTERM, &new_action, NULL) < 0) {
-		perror("Register signal failed");
-		return false;
-	}
-	return true;
-}
-
-// Signal handler
-void Server::SignalHandler(int signum) {
-
-	// Set SIGTERM mark and return
-	is_sigterm_ = true;
-}
-
 // Thread function to serve client
 void *Server::ServeClient(void *para) {
 	char recv_string[kBufSiz];
 	Server *ptr = (Server *)para;
 
 	// Thread loop
-	while (!is_sigterm_) {
+	while (!ptr->abort_flag_) {
 
 		// Lock mutex: get access to client queue
 		pthread_mutex_lock(&ptr->que_mutex_);
@@ -263,12 +245,12 @@ void *Server::ServeClient(void *para) {
 		// Check if queue is empty, and wait if so
 		while (ptr->client_que_.empty()) {
 			pthread_cond_wait(&ptr->que_not_empty_, &ptr->que_mutex_);
-			if (is_sigterm_) break;
+			if (ptr->abort_flag_) break;
 		}
 
 		// Not caused by SIGTERM
 		int client_fd = -1;
-		if (!is_sigterm_) {
+		if (!ptr->abort_flag_) {
 
 			// Queue is not empty, extract one client socket
 			client_fd = ptr->client_que_.front();
@@ -279,7 +261,7 @@ void *Server::ServeClient(void *para) {
 		pthread_mutex_unlock(&ptr->que_mutex_);
 
 		// SIGTERM
-		if (is_sigterm_) break;
+		if (ptr->abort_flag_) break;
 
 		// Handle only when client is alive
 		pthread_mutex_lock(&ptr->map_mutex_);

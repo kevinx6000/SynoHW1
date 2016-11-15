@@ -21,13 +21,11 @@ class Server {
 		Server(const Server &) = delete;
 		Server &operator=(const Server &) = delete;
 
+		void SetAbortFlag(bool);
 		bool CreateSocket(void);
 		bool AcceptConnection(void);
 		bool EchoString(void);
 		bool CloseSocket(void);
-
-		static bool RegisterSignal(void);
-		static void SignalHandler(int);
 
 	private:
 		void Initialize(int);
@@ -36,15 +34,13 @@ class Server {
 
 		int port_;
 		int server_socket_;
-		static bool is_sigterm_;
+		bool abort_flag_;
 		std::map<unsigned int, bool> is_alive_;
 		std::queue<int> client_que_;
 		pthread_mutex_t map_mutex_;
 		pthread_mutex_t que_mutex_;
 		pthread_cond_t que_not_empty_;
 		pthread_t pid[MAX_THREAD];
-
-		bool abort_flag;
 };
 
 #endif
