@@ -26,15 +26,21 @@ int main(int argc, char *argv[]) {
 
 	// Wait for user to input string
 	std::string input_string;
-	std::cout << "(Send): ";
-	std::getline(std::cin, input_string);
-
-	// Send to server and receiver from server
 	std::string output_string;
-	if (!client.SendAndRecv(input_string, output_string)) {
-		exit(EXIT_FAILURE);
+	while (!client.GetIsSigterm()) {
+
+		// Read user-input string
+		input_string.clear();
+		std::cout << "(Send): ";
+		std::getline(std::cin, input_string);
+
+		// Send to server and receiver from server
+		output_string.clear();
+		if (!client.SendAndRecv(input_string, output_string)) {
+			exit(EXIT_FAILURE);
+		}
+		std::cout << "(Recv): " << output_string << std::endl;
 	}
-	std::cout << "(Recv): " << output_string << std::endl;
 
 	// Close socket
 	if (!client.CloseSocket()) {

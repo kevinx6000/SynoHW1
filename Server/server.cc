@@ -164,7 +164,7 @@ bool Server::AcceptConnection(void) {
 				if (client_socket == -1) {
 					perror("[Warning] Accept connection failed");
 				} else {
-					ev.events = EPOLLIN | EPOLLET;
+					ev.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
 					ev.data.fd = client_socket;
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &ev) == -1) {
 						perror("[Warning] epoll_ctl: client socket");
@@ -180,6 +180,9 @@ bool Server::AcceptConnection(void) {
 
 			// Client socket ready
 			} else {
+
+				// Skip close socket event
+				if (events[i].events & EPOLLRDHUP) continue;
 
 				// Push client fd into queue, and signal
 				pthread_mutex_lock(&this->que_mutex_);
@@ -281,17 +284,19 @@ void *Server::ServeClient(void *para) {
 		// SIGTERM
 		if (is_sigterm_) break;
 
+		// Check alive or not
+		bool is_alive;
+		pthread_mutex_lock(&ptr->map_mutex_);
+		is_alive = ptr->is_alive_[client_fd];
+		pthread_mutex_unlock(&ptr->map_mutex_);
+		if (!is_alive) continue;
+
 		// Receive string directly
 		// Will not block since epoll is ready before entering thread
 		char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
 		int read_len = read(client_fd, recv_string, sizeof(char) * kBufSiz);
-		if (read_len == -1) {
-			perror("[Error] Receive string content failed");
-			free(recv_string);
-			break;
-		}
 
-		// Client really sent string (not disconnect)
+		// Client really sent string
 		if (read_len > 0) {
 			fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, client_fd);
 
@@ -302,21 +307,31 @@ void *Server::ServeClient(void *para) {
 				break;
 			}
 			fprintf(stderr, "[Info] String sent back (client %d)\n", client_fd);
+
+			// Push back into queue
+			pthread_mutex_lock(&ptr->que_mutex_);
+			ptr->client_que_.push(client_fd);
+			pthread_mutex_unlock(&ptr->que_mutex_);
+
+		// Client disconnected
 		} else {
 			fprintf(stderr, "[Info] Client %d is probably disconnected.\n", client_fd);
+
+			// Close socket
+			if (close(client_fd) == -1) {
+				perror("[Error] Close client socket failed");
+				free(recv_string);
+				break;
+			}
+
+			// Update alive mark
+			pthread_mutex_lock(&ptr->map_mutex_);
+			ptr->is_alive_[client_fd] = false;
+			pthread_mutex_unlock(&ptr->map_mutex_);
 		}
 
-		// Done
+		// Free string
 		free(recv_string);
-		if (close(client_fd) == -1) {
-			perror("[Error] Close client socket failed");
-			break;
-		}
-
-		// Update alive mark
-		pthread_mutex_lock(&ptr->map_mutex_);
-		ptr->is_alive_[client_fd] = false;
-		pthread_mutex_unlock(&ptr->map_mutex_);
 	}
 	pthread_exit(NULL);
 }

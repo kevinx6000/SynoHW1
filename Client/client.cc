@@ -92,14 +92,14 @@ bool Client::SendAndRecv(const std::string &input, std::string &output) {
 
 	// Send
 	if (!is_sigterm_) {
-		if (this->SendString(input)) {
+		if (!this->SendString(input)) {
 			return false;
 		}
 	}
 
 	// Receive
 	if (!is_sigterm_) {
-		if (this->RecvString(output)) {
+		if (!this->RecvString(output)) {
 			return false;
 		}
 	}
@@ -142,7 +142,6 @@ bool Client::RecvString(std::string &output_string) {
 	output_string = recv_string;
 	free(recv_string);
 	return true;
-
 }
 
 // Close socket
@@ -180,4 +179,9 @@ Client::~Client(void) {
 
 	// Destroy old variables
 	free(this->server_IP_);
+}
+
+// Get SIGTERM flag
+bool Client::GetIsSigterm(void) {
+	return is_sigterm_;
 }

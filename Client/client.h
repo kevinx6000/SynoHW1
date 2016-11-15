@@ -24,6 +24,7 @@ class Client {
 		~Client(void);
 		static bool RegisterSignal(void);
 		static void SignalHandler(int);
+		static bool GetIsSigterm(void);
 
 	private:
 		int client_socket_;
