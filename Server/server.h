@@ -3,8 +3,8 @@
 
 #define MAX_CLIENT 10002
 #define MAX_EVENT 10010
-#define MAX_THREAD 100
-#define kBufSiz 16383
+#define MAX_THREAD 1000
+#define kBufSiz 1023
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -17,18 +17,23 @@ class Server {
 	public:
 		Server(void);
 		Server(int);
-		Server(const Server &);
-		Server &operator=(const Server &);
-		void Initialize(int);
+		~Server(void);
+		Server(const Server &) = delete;
+		Server &operator=(const Server &) = delete;
+
 		bool CreateSocket(void);
 		bool AcceptConnection(void);
 		bool EchoString(void);
 		bool CloseSocket(void);
-		~Server(void);
+
 		static bool RegisterSignal(void);
 		static void SignalHandler(int);
-		static void *ServeClient(void *);
+
 	private:
+		void Initialize(int);
+
+		static void *ServeClient(void *);
+
 		int port_;
 		int server_socket_;
 		static bool is_sigterm_;
@@ -38,6 +43,8 @@ class Server {
 		pthread_mutex_t que_mutex_;
 		pthread_cond_t que_not_empty_;
 		pthread_t pid[MAX_THREAD];
+
+		bool abort_flag;
 };
 
 #endif

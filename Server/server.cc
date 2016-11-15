@@ -24,30 +24,6 @@ Server::Server(int port) {
 	this->Initialize(port);
 }
 
-// Copy constructor
-// Prevent wrong copy value of variables
-Server::Server(const Server &other) {
-	this->Initialize(other.port_);
-}
-
-// Copy assignment
-// Prevent wrong copy value of variables
-Server &Server::operator=(const Server &other) {
-
-	// Prevent self-assignment
-	if (&other != this) {
-
-		// Destroy mutex and conditional variable
-		pthread_mutex_destroy(&this->map_mutex_);
-		pthread_mutex_destroy(&this->que_mutex_);
-		pthread_cond_destroy(&this->que_not_empty_);
-
-		// Initialize again
-		this->Initialize(other.port_);
-	}
-	return *this;
-}
-
 // Initialize
 void Server::Initialize(int port) {
 
@@ -155,7 +131,7 @@ bool Server::AcceptConnection(void) {
 		// Process all ready events
 		for(int i = 0; i < numFD && !is_sigterm_; i++) {
 			
-			// Server socket ready
+			// Server socket event
 			if (events[i].data.fd == this->server_socket_) {
 
 				// Accept one client and record into epoll
@@ -178,14 +154,37 @@ bool Server::AcceptConnection(void) {
 					}
 				}
 
-			// Client socket ready
+			// Client socket event
 			} else {
 
-				// Push client fd into queue, and signal
-				pthread_mutex_lock(&this->que_mutex_);
-				this->client_que_.push(events[i].data.fd);
-				pthread_cond_signal(&this->que_not_empty_);
-				pthread_mutex_unlock(&this->que_mutex_);
+				// Socket close event
+				if (events[i].events & EPOLLRDHUP) {
+					fprintf(stderr, "[Info] Client %d is disconnected.\n", events[i].data.fd);
+
+					// Update alive mark
+					pthread_mutex_lock(&this->map_mutex_);
+					this->is_alive_[events[i].data.fd] = false;
+					pthread_mutex_unlock(&this->map_mutex_);
+
+					// Remove from epoll
+					if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) == -1) {
+						perror("[Warning] epoll_ctl: remove client socket");
+					}
+
+					// Close socket
+					if (close(events[i].data.fd) == -1) {
+						perror("[Error] Close client socket failed");
+					}
+
+				// I/O ready
+				} else {
+
+					// Push client fd into queue, and signal
+					pthread_mutex_lock(&this->que_mutex_);
+					this->client_que_.push(events[i].data.fd);
+					pthread_cond_signal(&this->que_not_empty_);
+					pthread_mutex_unlock(&this->que_mutex_);
+				}
 			}
 		}
 	}
@@ -252,6 +251,7 @@ void Server::SignalHandler(int signum) {
 
 // Thread function to serve client
 void *Server::ServeClient(void *para) {
+	char recv_string[kBufSiz];
 	Server *ptr = (Server *)para;
 
 	// Thread loop
@@ -281,56 +281,35 @@ void *Server::ServeClient(void *para) {
 		// SIGTERM
 		if (is_sigterm_) break;
 
-		// Check alive or not
-		bool is_alive;
+		// Handle only when client is alive
 		pthread_mutex_lock(&ptr->map_mutex_);
-		is_alive = ptr->is_alive_[client_fd];
-		pthread_mutex_unlock(&ptr->map_mutex_);
-		if (!is_alive) continue;
+		if (ptr->is_alive_[client_fd]) {
 
-		// Receive string directly
-		// Will not block since epoll is ready before entering thread
-		char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
-		int read_len = read(client_fd, recv_string, sizeof(char) * kBufSiz);
+			// Receive string directly
+			// Will not block since epoll is ready before entering thread
+			int read_len = read(client_fd, recv_string, sizeof(char) * kBufSiz);
 
-		// Client really sent string
-		if (read_len > 0) {
-			fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, client_fd);
+			// Client really sent string
+			if (read_len > 0) {
+				fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, client_fd);
 
-			// Send back string directly
-			if (write(client_fd, recv_string, sizeof(char) * kBufSiz) == -1) {
-				perror("[Error] Send back string content failed");
-				free(recv_string);
-				break;
-			}
-			fprintf(stderr, "[Info] String sent back (client %d)\n", client_fd);
-
-		// Client disconnected
-		} else {
-			fprintf(stderr, "[Info] Client %d is probably disconnected.\n", client_fd);
-
-			// Check alive again
-			pthread_mutex_lock(&ptr->map_mutex_);
-			is_alive = ptr->is_alive_[client_fd];
-			pthread_mutex_unlock(&ptr->map_mutex_);
-			if (is_alive) {
-
-				// Close socket
-				if (close(client_fd) == -1) {
-					perror("[Error] Close client socket failed");
-					free(recv_string);
-					break;
+				// Send back string directly
+				int write_len = write(client_fd, recv_string, sizeof(char) * kBufSiz);
+				if (write_len <= 0) {
+					perror("[Error] Send back string content failed");
 				}
-	
-				// Update alive mark
-				pthread_mutex_lock(&ptr->map_mutex_);
-				ptr->is_alive_[client_fd] = false;
-				pthread_mutex_unlock(&ptr->map_mutex_);
+				fprintf(stderr, "[Info] String sent back (client %d)\n", client_fd);
+				if (read_len != write_len) {
+					fprintf(stderr, "!!!: %d vs %d\n", read_len, write_len);
+					fflush(stderr);
+				}
+
+			// IMPOSSIBLE CONDITION
+			} else {
+				perror("[Error] Read failed (impossible?)");
 			}
 		}
-
-		// Free string
-		free(recv_string);
+		pthread_mutex_unlock(&ptr->map_mutex_);
 	}
 	pthread_exit(NULL);
 }

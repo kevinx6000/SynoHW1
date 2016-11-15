@@ -1,6 +1,6 @@
 # Parameters
 CC = g++
-CFLAGS = -c -Wall
+CFLAGS = -c -Wall -std=c++11
 SRCS = main.cc server.cc
 OBJS = $(SRCS:.cc=.o)
 EXEC = main

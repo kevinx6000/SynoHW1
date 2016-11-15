@@ -10,8 +10,8 @@
 #include <pthread.h>
 
 // Macros
-#define MAX_CLIENT 2000
-#define BUF_SIZE 16383
+#define MAX_CLIENT 1000
+#define BUF_SIZE 1023
 
 // Global variable
 int gSockets[MAX_CLIENT];
@@ -117,22 +117,24 @@ void *GoTrump(void *para) {
 	while ( (end_time = time(NULL)) - beg_time < 5) {
 
 		// Send string
-		if (write(gSockets[tid], send_str, sizeof(char) * BUF_SIZE) == -1) {
+		int write_len = write(gSockets[tid], send_str, sizeof(char) * BUF_SIZE);
+		if (write_len == -1) {
 			perror("[Error] Write failed");
 			break;
 		}
 
 		// Recv string
 		memset(recv_str, 0, sizeof(char) * BUF_SIZE);
-		if (read(gSockets[tid], recv_str, sizeof(char) * BUF_SIZE) == -1) {
+		int read_len = read(gSockets[tid], recv_str, sizeof(char) * BUF_SIZE);
+		if (read_len == -1) {
 			perror("[Error] Read failed");
 			break;
 		}
 
 		// Compare
 		if (strcmp(send_str, recv_str) != 0) {
-			fprintf(stderr, "[Error] (%d) String different %s and %s\n", tid, 
-				send_str, recv_str);
+			fprintf(stderr, "[Error] (%d) String different %s(%d) and %s(%d)\n", tid, 
+				send_str, write_len, recv_str, read_len);
 			fflush(stderr);
 			break;
 		}

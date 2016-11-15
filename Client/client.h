@@ -6,7 +6,7 @@
 #include <netinet/in.h>
 #include <string>
 
-#define kBufSiz 16383
+#define kBufSiz 1023
 
 class Client {
 	public:
