@@ -181,9 +181,6 @@ bool Server::AcceptConnection(void) {
 			// Client socket ready
 			} else {
 
-				// Skip close socket event
-				if (events[i].events & EPOLLRDHUP) continue;
-
 				// Push client fd into queue, and signal
 				pthread_mutex_lock(&this->que_mutex_);
 				this->client_que_.push(events[i].data.fd);
@@ -308,26 +305,28 @@ void *Server::ServeClient(void *para) {
 			}
 			fprintf(stderr, "[Info] String sent back (client %d)\n", client_fd);
 
-			// Push back into queue
-			pthread_mutex_lock(&ptr->que_mutex_);
-			ptr->client_que_.push(client_fd);
-			pthread_mutex_unlock(&ptr->que_mutex_);
-
 		// Client disconnected
 		} else {
 			fprintf(stderr, "[Info] Client %d is probably disconnected.\n", client_fd);
 
-			// Close socket
-			if (close(client_fd) == -1) {
-				perror("[Error] Close client socket failed");
-				free(recv_string);
-				break;
-			}
-
-			// Update alive mark
+			// Check alive again
 			pthread_mutex_lock(&ptr->map_mutex_);
-			ptr->is_alive_[client_fd] = false;
+			is_alive = ptr->is_alive_[client_fd];
 			pthread_mutex_unlock(&ptr->map_mutex_);
+			if (is_alive) {
+
+				// Close socket
+				if (close(client_fd) == -1) {
+					perror("[Error] Close client socket failed");
+					free(recv_string);
+					break;
+				}
+	
+				// Update alive mark
+				pthread_mutex_lock(&ptr->map_mutex_);
+				ptr->is_alive_[client_fd] = false;
+				pthread_mutex_unlock(&ptr->map_mutex_);
+			}
 		}
 
 		// Free string
