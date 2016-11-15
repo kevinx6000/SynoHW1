@@ -35,9 +35,11 @@ class Server {
 		int port_;
 		int server_socket_;
 		bool abort_flag_;
+		std::map<unsigned int, bool> is_used_;
 		std::map<unsigned int, bool> is_alive_;
 		std::queue<int> client_que_;
-		pthread_mutex_t map_mutex_;
+		pthread_mutex_t used_mutex_;
+		pthread_mutex_t alive_mutex_;
 		pthread_mutex_t que_mutex_;
 		pthread_cond_t que_not_empty_;
 		pthread_t pid[MAX_THREAD];

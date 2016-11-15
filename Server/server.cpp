@@ -33,11 +33,13 @@ void Server::Initialize(int port) {
 	this->abort_flag_ = false;
 	this->server_socket_ = -1;
 	this->is_alive_.clear();
+	this->is_used_.clear();
 	this->port_ = port;
 	while (!this->client_que_.empty()) this->client_que_.pop();
 
 	// Create mutex and conditional variables
-	pthread_mutex_init(&this->map_mutex_, NULL);
+	pthread_mutex_init(&this->used_mutex_, NULL);
+	pthread_mutex_init(&this->alive_mutex_, NULL);
 	pthread_mutex_init(&this->que_mutex_, NULL);
 	pthread_cond_init(&this->que_not_empty_, NULL);
 }
@@ -149,44 +151,21 @@ bool Server::AcceptConnection(void) {
 					} else {
 
 						// Update alive mark
-						pthread_mutex_lock(&this->map_mutex_);
+						pthread_mutex_lock(&this->alive_mutex_);
 						this->is_alive_[client_socket] = true;
-						pthread_mutex_unlock(&this->map_mutex_);
+						pthread_mutex_unlock(&this->alive_mutex_);
 						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
 					}
 				}
 
-			// Client socket event
+			// Client socket event (I/O or close)
 			} else {
 
-				// Socket close event
-				if (events[i].events & EPOLLRDHUP) {
-					fprintf(stderr, "[Info] Client %d is disconnected.\n", events[i].data.fd);
-
-					// Update alive mark
-					pthread_mutex_lock(&this->map_mutex_);
-					this->is_alive_[events[i].data.fd] = false;
-					pthread_mutex_unlock(&this->map_mutex_);
-
-					// Remove from epoll
-					if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) == -1) {
-						perror("[Warning] epoll_ctl: remove client socket");
-					}
-
-					// Close socket
-					if (close(events[i].data.fd) == -1) {
-						perror("[Error] Close client socket failed");
-					}
-
-				// I/O ready
-				} else {
-
-					// Push client fd into queue, and signal
-					pthread_mutex_lock(&this->que_mutex_);
-					this->client_que_.push(events[i].data.fd);
-					pthread_cond_signal(&this->que_not_empty_);
-					pthread_mutex_unlock(&this->que_mutex_);
-				}
+				// Push client fd into queue, and signal
+				pthread_mutex_lock(&this->que_mutex_);
+				this->client_que_.push(events[i].data.fd);
+				pthread_cond_signal(&this->que_not_empty_);
+				pthread_mutex_unlock(&this->que_mutex_);
 			}
 		}
 	}
@@ -263,9 +242,25 @@ void *Server::ServeClient(void *para) {
 		// SIGTERM
 		if (ptr->abort_flag_) break;
 
-		// Handle only when client is alive
-		pthread_mutex_lock(&ptr->map_mutex_);
-		if (ptr->is_alive_[client_fd]) {
+		// Check if fd is used
+		bool is_used;
+		pthread_mutex_lock(&ptr->used_mutex_);
+		is_used = ptr->is_used_[client_fd];
+		if (!is_used) ptr->is_used_[client_fd] = true;
+		pthread_mutex_unlock(&ptr->used_mutex_);
+
+		// Used
+		if (is_used) {
+
+			// Push back into queue
+			pthread_mutex_lock(&ptr->que_mutex_);
+			ptr->client_que_.push(client_fd);
+			pthread_mutex_unlock(&ptr->que_mutex_);
+			continue;
+
+		// Not used
+		// Serve this client (guaranteed that only this thread will serve it now)
+		} else {
 
 			// Receive string directly
 			// Will not block since epoll is ready before entering thread
@@ -281,17 +276,33 @@ void *Server::ServeClient(void *para) {
 					perror("[Error] Send back string content failed");
 				}
 				fprintf(stderr, "[Info] String sent back (client %d)\n", client_fd);
+
+				// Error check
 				if (read_len != write_len) {
 					fprintf(stderr, "!!!: %d vs %d\n", read_len, write_len);
 					fflush(stderr);
 				}
 
-			// IMPOSSIBLE CONDITION
+			// Close socket
 			} else {
-				perror("[Error] Read failed (impossible?)");
+
+				// Update alive mark
+				pthread_mutex_lock(&ptr->alive_mutex_);
+				ptr->is_alive_[client_fd] = false;
+				pthread_mutex_unlock(&ptr->alive_mutex_);
+
+				// Close socket
+				if (close(client_fd) == -1) {
+					perror("[Error] Close client socket failed");
+				}
+				fprintf(stderr, "[Info] Client %d is disconnected.\n", client_fd);
 			}
+
+			// Mark it as not used no matter closed or not
+			pthread_mutex_lock(&ptr->used_mutex_);
+			ptr->is_used_[client_fd] = false;
+			pthread_mutex_unlock(&ptr->used_mutex_);
 		}
-		pthread_mutex_unlock(&ptr->map_mutex_);
 	}
 	pthread_exit(NULL);
 }
@@ -300,11 +311,13 @@ void *Server::ServeClient(void *para) {
 Server::~Server(void) {
 
 	// Clear up map and queue
+	this->is_used_.clear();
 	this->is_alive_.clear();
 	while (!this->client_que_.empty()) this->client_que_.pop();
 
 	// Destroy mutex and conditional variable
-	pthread_mutex_destroy(&this->map_mutex_);
+	pthread_mutex_destroy(&this->used_mutex_);
+	pthread_mutex_destroy(&this->alive_mutex_);
 	pthread_mutex_destroy(&this->que_mutex_);
 	pthread_cond_destroy(&this->que_not_empty_);
 }

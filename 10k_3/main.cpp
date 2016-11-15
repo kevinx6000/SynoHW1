@@ -10,7 +10,7 @@
 #include <pthread.h>
 
 // Macros
-#define MAX_CLIENT 1000
+#define MAX_CLIENT 10000
 #define BUF_SIZE 1023
 
 // Global variable
