@@ -21,10 +21,11 @@ class Server {
 		Server(const Server &) = delete;
 		Server &operator=(const Server &) = delete;
 
+		// Thread safety: No
 		void SetAbortFlag(bool);
+
 		bool CreateSocket(void);
 		bool AcceptConnection(void);
-		bool EchoString(void);
 		bool CloseSocket(void);
 
 	private:

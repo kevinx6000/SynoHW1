@@ -9,9 +9,9 @@
 bool is_sigterm;
 
 // Function prototype
-bool RegisterSignal(void);
-void SignalHandler(int);
-void *ServerThread(void *);
+static bool RegisterSignal(void);
+static void SignalHandler(int);
+static void *ServerThread(void *);
 
 int main(int argc, char *argv[]) {
 
@@ -41,6 +41,7 @@ int main(int argc, char *argv[]) {
 
 	// Wait for join
 	pthread_join(pid, NULL);
+	return 0;
 }
 
 // Register signal (SIGTERM)

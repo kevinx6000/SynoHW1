@@ -132,8 +132,10 @@ bool Server::AcceptConnection(void) {
 			return false;
 		}
 
+		if (abort_flag_) break;
+
 		// Process all ready events
-		for(int i = 0; i < numFD && !abort_flag_; i++) {
+		for(int i = 0; i < numFD; i++) {
 			
 			// Server socket event
 			if (events[i].data.fd == this->server_socket_) {
@@ -212,7 +214,6 @@ bool Server::CloseSocket(void) {
 
 // Thread function to serve client
 void *Server::ServeClient(void *para) {
-	char recv_string[kBufSiz];
 	Server *ptr = (Server *)para;
 
 	// Thread loop
@@ -243,7 +244,7 @@ void *Server::ServeClient(void *para) {
 		if (ptr->abort_flag_) break;
 
 		// Check if fd is used
-		bool is_used;
+		bool is_used = false;
 		pthread_mutex_lock(&ptr->used_mutex_);
 		is_used = ptr->is_used_[client_fd];
 		if (!is_used) ptr->is_used_[client_fd] = true;
@@ -264,6 +265,7 @@ void *Server::ServeClient(void *para) {
 
 			// Receive string directly
 			// Will not block since epoll is ready before entering thread
+			char recv_string[kBufSiz];
 			int read_len = read(client_fd, recv_string, sizeof(char) * kBufSiz);
 
 			// Client really sent string

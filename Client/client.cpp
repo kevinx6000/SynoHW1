@@ -86,7 +86,7 @@ bool Client::SendAndRecv(const std::string &input, std::string &output) {
 }
 
 // Send string to server
-bool Client::SendString(const std::string input_string) {
+bool Client::SendString(const std::string &input_string) {
 
 	// Check string length
 	if (input_string.length() >= kBufSiz) {

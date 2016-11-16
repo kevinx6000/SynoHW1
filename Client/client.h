@@ -27,7 +27,7 @@ class Client {
 
 	private:
 		void Initialize(const char *, const int);
-		bool SendString(const std::string);
+		bool SendString(const std::string &);
 		bool RecvString(std::string &);
 
 		int client_socket_;

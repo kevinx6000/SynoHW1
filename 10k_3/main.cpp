@@ -138,6 +138,7 @@ void *GoTrump(void *para) {
 			fflush(stderr);
 			break;
 		}
+		usleep(100000);
 	}
 
 	// End
