@@ -10,7 +10,7 @@
 
 // Macros
 #define MAX_CLIENT 10000
-#define BUF_SIZE 16383
+#define BUF_SIZE 1023
 
 // Functions
 void SetServerAddr(struct sockaddr_in &);

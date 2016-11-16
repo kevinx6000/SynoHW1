@@ -1,7 +1,7 @@
 # Parameters
 CC = g++
-CFLAGS = -c -Wall -std=c++11
-SRCS = main.cpp client.cpp
+CFLAGS = -c -Wall
+SRCS = main.cpp
 OBJS = $(SRCS:.cpp=.o)
 EXEC = main
 
