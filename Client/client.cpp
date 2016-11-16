@@ -8,12 +8,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <signal.h>
-#include <iostream>
 #include <string>
-
-// Static class members
-bool Client::is_sigterm_;
 
 // Constructor
 Client::Client(void) {
@@ -25,30 +20,13 @@ Client::Client(const int port) {
 Client::Client(const char *IP) {
 	this->Initialize(IP, 9453);
 }
-
-// Copy constructor
-Client::Client(const Client &other) {
-	this->Initialize(other.server_IP_, other.server_port_);
-}
-
-// Copy assignment
-Client &Client::operator=(const Client &other) {
-	
-	// Prevent self-assignment
-	if (&other != this) {
-
-		// Destroy old variables
-		free(this->server_IP_);
-
-		// Initialize again
-		this->Initialize(other.server_IP_, other.server_port_);
-	}
-	return *this;
+Client::Client(const char *IP, const int port) {
+	this->Initialize(IP, port);
 }
 
 // Initialize variable
 void Client::Initialize(const char *IP, const int port) {
-	is_sigterm_ = false;
+	is_abort_ = false;
 	this->client_socket_ = -1;
 	this->server_IP_ = (char *)malloc(sizeof(char)*(strlen(IP)+1));
 	strcpy(this->server_IP_, IP);
@@ -91,14 +69,14 @@ bool Client::Connect(void) {
 bool Client::SendAndRecv(const std::string &input, std::string &output) {
 
 	// Send
-	if (!is_sigterm_) {
+	if (!is_abort_) {
 		if (!this->SendString(input)) {
 			return false;
 		}
 	}
 
 	// Receive
-	if (!is_sigterm_) {
+	if (!is_abort_) {
 		if (!this->RecvString(output)) {
 			return false;
 		}
@@ -156,24 +134,6 @@ bool Client::CloseSocket(void) {
 	}
 }
 
-// Register signal
-bool Client::RegisterSignal(void) {
-	struct sigaction new_action;
-	new_action.sa_handler = SignalHandler;
-	sigemptyset(&new_action.sa_mask);
-	new_action.sa_flags = 0;
-	if (sigaction(SIGTERM, &new_action, NULL) < 0) {
-		perror("Register signal failed");
-		return false;
-	}
-	return true;
-}
-
-// Signal handler
-void Client::SignalHandler(int signum) {
-	is_sigterm_ = true;
-}
-
 // Destructor
 Client::~Client(void) {
 
@@ -181,7 +141,12 @@ Client::~Client(void) {
 	free(this->server_IP_);
 }
 
-// Get SIGTERM flag
-bool Client::GetIsSigterm(void) {
-	return is_sigterm_;
+// Get abort flag
+bool Client::GetAbortFlag(void) {
+	return is_abort_;
+}
+
+// Set abort flag
+void Client::SetAbortFlag(bool flag) {
+	is_abort_ = flag;
 }

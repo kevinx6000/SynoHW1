@@ -14,28 +14,27 @@ class Client {
 		Client(const int);
 		Client(const char *);
 		Client(const char *, const int);
-		Client(const Client &);
-		Client &operator=(const Client &);
-		void Initialize(const char *, const int);
+		Client(const Client &) = delete;
+		Client &operator=(const Client &) = delete;
+		~Client(void);
+
 		bool CreateSocket(void);
 		bool Connect(void);
 		bool SendAndRecv(const std::string &, std::string &);
 		bool CloseSocket(void);
-		~Client(void);
-		static bool RegisterSignal(void);
-		static void SignalHandler(int);
-		static bool GetIsSigterm(void);
+		bool GetAbortFlag(void);
+		void SetAbortFlag(bool);
 
 	private:
+		void Initialize(const char *, const int);
+		bool SendString(const std::string);
+		bool RecvString(std::string &);
+
 		int client_socket_;
 		int server_port_;
 		char *server_IP_;
 		struct sockaddr_in server_addr_;
-		static bool is_sigterm_;
-
-		// Only accessible to member functions
-		bool SendString(const std::string);
-		bool RecvString(std::string &);
+		bool is_abort_;
 };
 
 #endif

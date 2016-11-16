@@ -1,6 +1,6 @@
 # Parameters
 CC = g++
-CFLAGS = -c -Wall
+CFLAGS = -c -Wall -std=c++11
 SRCS = main.cpp client.cpp
 OBJS = $(SRCS:.cpp=.o)
 EXEC = main
@@ -9,7 +9,7 @@ EXEC = main
 all: $(SRCS) $(EXEC)
 
 $(EXEC): $(OBJS)
-	$(CC) $(OBJS) -o $@
+	$(CC) $(OBJS) -o $@ -lpthread
 
 .cpp.o:
 	$(CC) $(CFLAGS) -o $@ $<
