@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <map>
 #include <queue>
 
@@ -51,6 +53,12 @@ bool Server::CreateSocket(void) {
 	this->server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
 	if (this->server_socket_ == -1) {
 		perror("[Error] Create socket failed");
+		return false;
+	}
+
+	// Set socket to non-blocking
+	if (fcntl(this->server_socket_, F_SETFL, O_NONBLOCK) != 0) {
+		perror("[Error] Set socket as non-blocking failed");
 		return false;
 	}
 
@@ -111,7 +119,7 @@ bool Server::AcceptConnection(void) {
 
 	// Monitor server socket
 	struct epoll_event ev;
-	ev.events = EPOLLIN;
+	ev.events = EPOLLIN | EPOLLET;
 	ev.data.fd = server_socket_;
 	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, this->server_socket_, &ev) == -1) {
 		perror("[Error] epoll_ctl");
@@ -140,12 +148,12 @@ bool Server::AcceptConnection(void) {
 			// Server socket event
 			if (events[i].data.fd == this->server_socket_) {
 
-				// Accept one client and record into epoll
-				int client_socket = accept(this->server_socket_,
-					(struct sockaddr *) &client_addr, &addrlen);
-				if (client_socket == -1) {
-					perror("[Warning] Accept connection failed");
-				} else {
+				// Accept one or more client
+				int client_socket = -1;
+				while ((client_socket = accept(this->server_socket_, 
+						(struct sockaddr *) &client_addr, &addrlen)) >= 0) {
+
+					// Record into epoll
 					ev.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
 					ev.data.fd = client_socket;
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &ev) == -1) {
@@ -158,6 +166,12 @@ bool Server::AcceptConnection(void) {
 						pthread_mutex_unlock(&this->alive_mutex_);
 						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
 					}
+				}
+
+				// Reach end (client_socket == -1) or error
+				if (errno == EAGAIN || errno == EWOULDBLOCK) {continue;}
+				else {
+					perror("[Error] Accept failed");
 				}
 
 			// Client socket event (I/O or close)
