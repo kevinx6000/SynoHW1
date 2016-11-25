@@ -243,6 +243,12 @@ void *Server::ServeClient(void *para) {
 		// SIGTERM
 		if (ptr->abort_flag_) break;
 
+		// Check if fd is alive
+		bool is_alive = false;
+		pthread_mutex_lock(&ptr->alive_mutex_);
+		is_alive = ptr->is_alive_[client_fd];
+		pthread_mutex_unlock(&ptr->alive_mutex_);
+
 		// Check if fd is used
 		bool is_used = false;
 		pthread_mutex_lock(&ptr->used_mutex_);
@@ -250,14 +256,23 @@ void *Server::ServeClient(void *para) {
 		if (!is_used) ptr->is_used_[client_fd] = true;
 		pthread_mutex_unlock(&ptr->used_mutex_);
 
+		// Closed
+		if (!is_alive) {
+			
+			// Update used mark to false
+			if (!is_used) {
+				pthread_mutex_lock(&ptr->used_mutex_);
+				ptr->is_used_[client_fd] = false;
+				pthread_mutex_unlock(&ptr->used_mutex_);
+			}
+
 		// Used
-		if (is_used) {
+		} else if (is_used) {
 
 			// Push back into queue
 			pthread_mutex_lock(&ptr->que_mutex_);
 			ptr->client_que_.push(client_fd);
 			pthread_mutex_unlock(&ptr->que_mutex_);
-			continue;
 
 		// Not used
 		// Serve this client (guaranteed that only this thread will serve it now)
@@ -271,6 +286,10 @@ void *Server::ServeClient(void *para) {
 			// Client really sent string
 			if (read_len > 0) {
 				fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, client_fd);
+				if ((unsigned int)read_len < sizeof(char) * kBufSiz) {
+					fprintf(stderr, "[Error] read length is not enough (client %d)\n", client_fd);
+					fflush(stderr);
+				}
 
 				// Send back string directly
 				int write_len = write(client_fd, recv_string, sizeof(char) * kBufSiz);
@@ -286,7 +305,7 @@ void *Server::ServeClient(void *para) {
 				}
 
 			// Close socket
-			} else {
+			} else if (read_len == 0) {
 
 				// Update alive mark
 				pthread_mutex_lock(&ptr->alive_mutex_);
@@ -298,6 +317,10 @@ void *Server::ServeClient(void *para) {
 					perror("[Error] Close client socket failed");
 				}
 				fprintf(stderr, "[Info] Client %d is disconnected.\n", client_fd);
+				
+			// Error
+			} else {
+				perror("[Error] read error");
 			}
 
 			// Mark it as not used no matter closed or not
