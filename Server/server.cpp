@@ -56,8 +56,14 @@ bool Server::CreateSocket(void) {
 		return false;
 	}
 
-	// Set socket to non-blocking
-	if (fcntl(this->server_socket_, F_SETFL, O_NONBLOCK) != 0) {
+	// Get current flag
+	int file_flags = fcntl(this->server_socket_, F_GETFL, 0);
+	if (file_flags == -1) {
+		perror("[Error] Get socket flags failed");
+		return false;
+	}
+	file_flags |= O_NONBLOCK;
+	if (fcntl(this->server_socket_, F_SETFL, file_flags) == -1) {
 		perror("[Error] Set socket as non-blocking failed");
 		return false;
 	}
