@@ -105,8 +105,24 @@ bool Client::SendString(const std::string &input_string) {
 
 			// Error
 			if (write_byte == -1) {
-				perror("[Error] Write failed");
-				return false;
+
+				// Interrupt
+				if (errno == EINTR) {
+
+					// Other than SIGTERM, restart
+					if (!is_abort_) {
+						continue;
+
+					// SIGTERM, return
+					} else {
+						return false;
+					}
+
+				// Other fail
+				} else {
+					perror("[Error] Write failed");
+					return false;
+				}
 			}
 			cur_byte += write_byte;
 		}
@@ -130,8 +146,24 @@ bool Client::RecvString(std::string &output_string) {
 
 		// Error
 		if (read_byte == -1) {
-			perror("[Error] Read failed");
-			return false;
+
+			// Interrupt
+			if (errno == EINTR) {
+
+				// Other than SIGTERM, restart
+				if (!is_abort_) {
+					continue;
+
+				// SIGTERM
+				} else {
+					return false;
+				}
+
+			// Other fail
+			} else {
+				perror("[Error] Read failed");
+				return false;
+			}
 		}
 		cur_byte += read_byte;
 	}

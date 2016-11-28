@@ -338,6 +338,11 @@ void *Server::ServeClient(void *para) {
 
 					// Close or EAGAIN or Error
 					} else {
+
+						// Interrupt other than SIGTERM, restart
+						if (read_byte == -1 && errno == EINTR && !ptr->abort_flag_) {
+							continue;
+						}
 						break;
 					}
 				}
@@ -359,7 +364,18 @@ void *Server::ServeClient(void *para) {
 				// Read error
 				} else if (read_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
 					perror("[Error] Read error");
-					/* TODO: handle? possibly close it? */
+					
+					/* Close socket */
+					// Update alive mark
+					pthread_mutex_lock(&ptr->alive_mutex_);
+					ptr->is_alive_[jNode.fd] = false;
+					pthread_mutex_unlock(&ptr->alive_mutex_);
+
+					// Close socket
+					if (close(jNode.fd) == -1) {
+						perror("[Error] Close client socket failed");
+					}
+					fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
 
 				// Read successfully
 				} else {
@@ -406,6 +422,11 @@ void *Server::ServeClient(void *para) {
 
 					// EAGAIN or Error
 					} else {
+
+						// Interrupt other than SIGTERM, restart
+						if (write_byte == -1 && errno == EINTR && !ptr->abort_flag_) {
+							continue;
+						}
 						break;
 					}
 				}
@@ -413,7 +434,18 @@ void *Server::ServeClient(void *para) {
 				// Write error
 				if (write_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
 					perror("[Error] Write error");
-					/* TODO: handle? */
+
+					/* Close socket */
+					// Update alive mark
+					pthread_mutex_lock(&ptr->alive_mutex_);
+					ptr->is_alive_[jNode.fd] = false;
+					pthread_mutex_unlock(&ptr->alive_mutex_);
+
+					// Close socket
+					if (close(jNode.fd) == -1) {
+						perror("[Error] Close client socket failed");
+					}
+					fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
 
 				// Write successfully
 				} else {

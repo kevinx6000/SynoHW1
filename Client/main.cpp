@@ -138,7 +138,7 @@ void *ClientThread(void *para) {
 
 			// Send to server and receiver from server
 			if (!client->SendAndRecv(input_string, output_string)) {
-				pthread_exit(NULL);
+				break;
 			}
 			printf("(Recv): %s\n", output_string.c_str());
 			fflush(stdout);
