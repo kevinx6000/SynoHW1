@@ -28,9 +28,18 @@ class Server {
 		bool CreateSocket(void);
 		bool AcceptConnection(void);
 		bool CloseSocket(void);
+	
+	private:
+		// Job queue entry
+		typedef struct {
+			int fd;
+			uint32_t events;
+		}JobNode;
 
 	private:
 		void Initialize(int);
+		void ReadFromClient(Server *, const JobNode &);
+		void WriteToClient(Server *, const JobNode &);
 		bool MakeNonblocking(int);
 
 		static void *ServeClient(void *);
@@ -48,10 +57,6 @@ class Server {
 		std::map<unsigned int, bool> is_used_;
 
 		// Client fd job queue
-		typedef struct {
-			int fd;
-			uint32_t events;
-		}JobNode;
 		pthread_mutex_t que_mutex_;
 		std::queue<JobNode> client_que_;
 		pthread_cond_t que_not_empty_;

@@ -312,158 +312,13 @@ void *Server::ServeClient(void *para) {
 		// Otherwise, serve it!
 		} else {
 
-			// Retrieve current content of string (read/write)
-			std::string cur_content = "";
-			int cur_byte = 0;
-			char str_buf[kBufSiz];
-			pthread_mutex_lock(&ptr->content_mutex_);
-			cur_content = ptr->cur_content_[jNode.fd];
-			cur_byte = ptr->cur_byte_[jNode.fd];
-			pthread_mutex_unlock(&ptr->content_mutex_);
-			memset(str_buf, 0, sizeof(str_buf));
-			sprintf(str_buf, "%s", cur_content.c_str());
-
-			// Read event
+			// Read event (and write if completed)
 			if (cur_status == READ) {
-				
-				// Read until byte reaches target
-				int need_byte = sizeof(char) * kBufSiz;
-				int read_byte = 0;
-				while (cur_byte < need_byte) {
-					read_byte = read(jNode.fd, str_buf + cur_byte, need_byte - cur_byte);
-
-					// Append content
-					if (read_byte > 0) {
-						cur_byte += read_byte;
-
-					// Close or EAGAIN or Error
-					} else {
-
-						// Interrupt other than SIGTERM, restart
-						if (read_byte == -1 && errno == EINTR && !ptr->abort_flag_) {
-							continue;
-						}
-						break;
-					}
-				}
-
-				// Close socket connection
-				if (read_byte == 0) {
-
-					// Update alive mark
-					pthread_mutex_lock(&ptr->alive_mutex_);
-					ptr->is_alive_[jNode.fd] = false;
-					pthread_mutex_unlock(&ptr->alive_mutex_);
-
-					// Close socket
-					if (close(jNode.fd) == -1) {
-						perror("[Error] Close client socket failed");
-					}
-					fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
-
-				// Read error
-				} else if (read_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
-					perror("[Error] Read error");
-					
-					/* Close socket */
-					// Update alive mark
-					pthread_mutex_lock(&ptr->alive_mutex_);
-					ptr->is_alive_[jNode.fd] = false;
-					pthread_mutex_unlock(&ptr->alive_mutex_);
-
-					// Close socket
-					if (close(jNode.fd) == -1) {
-						perror("[Error] Close client socket failed");
-					}
-					fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
-
-				// Read successfully
-				} else {
-					cur_content = str_buf;
-					pthread_mutex_lock(&ptr->content_mutex_);
-
-					// Store back
-					ptr->cur_content_[jNode.fd] = cur_content;
-
-					// Not yet finished
-					if (cur_byte < need_byte) {
-						ptr->cur_byte_[jNode.fd] = cur_byte;
-
-					// Finished, change to WRITE mode
-					} else {
-						ptr->cur_status_[jNode.fd] = WRITE;
-						ptr->cur_byte_[jNode.fd] = 0;
-					}
-
-					pthread_mutex_unlock(&ptr->content_mutex_);
-
-					// Manually add write job into queue
-					JobNode jTmp;
-					jTmp.fd = jNode.fd;
-					jTmp.events = EPOLLOUT;
-					pthread_mutex_lock(&ptr->que_mutex_);
-					ptr->client_que_.push(jTmp);
-					pthread_cond_signal(&ptr->que_not_empty_);
-					pthread_mutex_unlock(&ptr->que_mutex_);
-				}
+				ptr->ReadFromClient(ptr, jNode);
 
 			// Write event
 			} else if (cur_status == WRITE) {
-
-				// Write until byte reaches target
-				int need_byte = sizeof(char) * kBufSiz;
-				int write_byte = 0;
-				while (cur_byte < need_byte) {
-					write_byte = write(jNode.fd, str_buf + cur_byte, need_byte - cur_byte);
-
-					// Update remaining
-					if (write_byte > 0) {
-						cur_byte += write_byte;
-
-					// EAGAIN or Error
-					} else {
-
-						// Interrupt other than SIGTERM, restart
-						if (write_byte == -1 && errno == EINTR && !ptr->abort_flag_) {
-							continue;
-						}
-						break;
-					}
-				}
-
-				// Write error
-				if (write_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
-					perror("[Error] Write error");
-
-					/* Close socket */
-					// Update alive mark
-					pthread_mutex_lock(&ptr->alive_mutex_);
-					ptr->is_alive_[jNode.fd] = false;
-					pthread_mutex_unlock(&ptr->alive_mutex_);
-
-					// Close socket
-					if (close(jNode.fd) == -1) {
-						perror("[Error] Close client socket failed");
-					}
-					fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
-
-				// Write successfully
-				} else {
-					pthread_mutex_lock(&ptr->content_mutex_);
-
-					// Not yet finished
-					if (cur_byte < need_byte) {
-						ptr->cur_byte_[jNode.fd] = cur_byte;
-
-					// Finished, change to READ mode
-					} else {
-						ptr->cur_status_[jNode.fd] = READ;
-						ptr->cur_content_[jNode.fd] = "";
-						ptr->cur_byte_[jNode.fd] = 0;
-					}
-
-					pthread_mutex_unlock(&ptr->content_mutex_);
-				}
+				ptr->WriteToClient(ptr, jNode);
 
 			// Unknown event??
 			} else {
@@ -495,6 +350,180 @@ bool Server::MakeNonblocking(int fd) {
 		return false;
 	}
 	return true;
+}
+
+// Read string from client
+void Server::ReadFromClient(Server *ptr, const JobNode &jNode) {
+
+	// Variables
+	int cur_byte = 0;
+	char str_buf[kBufSiz];
+	std::string cur_content = "";
+
+	// Retrieve current content of string (read/write)
+	pthread_mutex_lock(&ptr->content_mutex_);
+	cur_byte = ptr->cur_byte_[jNode.fd];
+	cur_content = ptr->cur_content_[jNode.fd];
+	pthread_mutex_unlock(&ptr->content_mutex_);
+
+	// Copy to char buffer
+	memset(str_buf, 0, sizeof(str_buf));
+	sprintf(str_buf, "%s", cur_content.c_str());
+
+	// Read until byte reaches target
+	int need_byte = sizeof(char) * kBufSiz;
+	int read_byte = 0;
+	while (cur_byte < need_byte) {
+		read_byte = read(jNode.fd, str_buf + cur_byte, need_byte - cur_byte);
+
+		// Append content
+		if (read_byte > 0) {
+			cur_byte += read_byte;
+
+		// Close or EAGAIN or Error
+		} else {
+
+			// Interrupt other than SIGTERM, restart
+			if (read_byte == -1 && errno == EINTR && !ptr->abort_flag_) {
+				continue;
+			}
+			break;
+		}
+	}
+
+	// Close socket connection
+	if (read_byte == 0) {
+
+		// Update alive mark
+		pthread_mutex_lock(&ptr->alive_mutex_);
+		ptr->is_alive_[jNode.fd] = false;
+		pthread_mutex_unlock(&ptr->alive_mutex_);
+
+		// Close socket
+		if (close(jNode.fd) == -1) {
+			perror("[Error] Close client socket failed");
+		}
+		fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
+
+	// Read error
+	} else if (read_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+		perror("[Error] Read error");
+
+		/* Close socket */
+		// Update alive mark
+		pthread_mutex_lock(&ptr->alive_mutex_);
+		ptr->is_alive_[jNode.fd] = false;
+		pthread_mutex_unlock(&ptr->alive_mutex_);
+
+		// Close socket
+		if (close(jNode.fd) == -1) {
+			perror("[Error] Close client socket failed");
+		}
+		fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
+
+	// Read successfully
+	} else {
+		cur_content = str_buf;
+		pthread_mutex_lock(&ptr->content_mutex_);
+
+		// Store back
+		ptr->cur_content_[jNode.fd] = cur_content;
+
+		// Not yet finished
+		if (cur_byte < need_byte) {
+			ptr->cur_byte_[jNode.fd] = cur_byte;
+
+		// Finished, change to WRITE mode
+		} else {
+			ptr->cur_status_[jNode.fd] = WRITE;
+			ptr->cur_byte_[jNode.fd] = 0;
+		}
+
+		pthread_mutex_unlock(&ptr->content_mutex_);
+
+		// Manually add write job into queue
+		JobNode jTmp;
+		jTmp.fd = jNode.fd;
+		jTmp.events = EPOLLOUT;
+		pthread_mutex_lock(&ptr->que_mutex_);
+		ptr->client_que_.push(jTmp);
+		pthread_cond_signal(&ptr->que_not_empty_);
+		pthread_mutex_unlock(&ptr->que_mutex_);
+	}
+}
+
+// Write string to client
+void Server::WriteToClient(Server *ptr, const JobNode &jNode) {
+
+	// Variable
+	std::string cur_content = "";
+	int cur_byte = 0;
+	char str_buf[kBufSiz];
+
+	// Retrieve current content of string (read/write)
+	pthread_mutex_lock(&ptr->content_mutex_);
+	cur_content = ptr->cur_content_[jNode.fd];
+	cur_byte = ptr->cur_byte_[jNode.fd];
+	pthread_mutex_unlock(&ptr->content_mutex_);
+
+	// Copy to string
+	memset(str_buf, 0, sizeof(str_buf));
+	sprintf(str_buf, "%s", cur_content.c_str());
+
+	// Write until byte reaches target
+	int need_byte = sizeof(char) * kBufSiz;
+	int write_byte = 0;
+	while (cur_byte < need_byte) {
+		write_byte = write(jNode.fd, str_buf + cur_byte, need_byte - cur_byte);
+
+		// Update remaining
+		if (write_byte > 0) {
+			cur_byte += write_byte;
+
+		// EAGAIN or Error
+		} else {
+
+			// Interrupt other than SIGTERM, restart
+			if (write_byte == -1 && errno == EINTR && !ptr->abort_flag_) {
+				continue;
+			}
+			break;
+		}
+	}
+
+	// Write error
+	if (write_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+		perror("[Error] Write error");
+
+		/* Close socket */
+		// Update alive mark
+		pthread_mutex_lock(&ptr->alive_mutex_);
+		ptr->is_alive_[jNode.fd] = false;
+		pthread_mutex_unlock(&ptr->alive_mutex_);
+
+		// Close socket
+		if (close(jNode.fd) == -1) {
+			perror("[Error] Close client socket failed");
+		}
+		fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
+
+	// Write successfully
+	} else {
+		pthread_mutex_lock(&ptr->content_mutex_);
+
+		// Not yet finished
+		if (cur_byte < need_byte) {
+			ptr->cur_byte_[jNode.fd] = cur_byte;
+
+		// Finished, change to READ mode
+		} else {
+			ptr->cur_status_[jNode.fd] = READ;
+			ptr->cur_content_[jNode.fd] = "";
+			ptr->cur_byte_[jNode.fd] = 0;
+		}
+
+		pthread_mutex_unlock(&ptr->content_mutex_);
+	}
 }
 
 // Destructor
