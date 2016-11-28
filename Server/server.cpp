@@ -128,7 +128,7 @@ bool Server::AcceptConnection(void) {
 	}
 
 	// Server control 
-	int numFD;
+	int numFD = 0;
 	struct epoll_event events[MAX_EVENT];
 	struct sockaddr_in client_addr;
 	socklen_t addrlen = sizeof(client_addr);
@@ -336,7 +336,7 @@ void *Server::ServeClient(void *para) {
 					if (read_byte > 0) {
 						cur_byte += read_byte;
 
-					// Close or EAGAIN
+					// Close or EAGAIN or Error
 					} else {
 						break;
 					}
@@ -359,6 +359,7 @@ void *Server::ServeClient(void *para) {
 				// Read error
 				} else if (read_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
 					perror("[Error] Read error");
+					/* TODO: handle? possibly close it? */
 
 				// Read successfully
 				} else {
@@ -403,7 +404,7 @@ void *Server::ServeClient(void *para) {
 					if (write_byte > 0) {
 						cur_byte += write_byte;
 
-					// EAGAIN
+					// EAGAIN or Error
 					} else {
 						break;
 					}
@@ -412,6 +413,7 @@ void *Server::ServeClient(void *para) {
 				// Write error
 				if (write_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
 					perror("[Error] Write error");
+					/* TODO: handle? */
 
 				// Write successfully
 				} else {

@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <errno.h>
 
 // Macros
 #define MAX_CLIENT 10000
@@ -55,6 +56,7 @@ int main(int argc, char *argv[]) {
 	for (int i = 0; i < MAX_CLIENT; i++) {
 		if (pthread_join(gPid[i], NULL) != 0) {
 			perror("Thread join");
+			exit(EXIT_FAILURE);
 		}
 	}
 
@@ -81,6 +83,12 @@ bool CreateSocket(int sockets[], int num) {
 		if (sockets[i] == -1) {
 			return false;
 		}
+		int mark = 1;
+		if (setsockopt(sockets[i], SOL_SOCKET, SO_REUSEADDR, &mark,
+				sizeof(mark)) == -1) {
+			perror("[Error] Set socket option failed");
+			return false;
+		}
 	}
 	return true;
 }
@@ -89,6 +97,7 @@ bool CreateSocket(int sockets[], int num) {
 bool CloseSocket(int sockets[], int num) {
 	for(int i = 0; i < num; i++) {
 		if (close(sockets[i]) == -1) {
+			perror("[Error] close socket");
 			return false;
 		}
 	}
@@ -107,6 +116,8 @@ void *GoTrump(void *para) {
 	if (connect(gSockets[tid], (struct sockaddr *)&gServer_addr, 
 			sizeof(gServer_addr)) == -1) {
 		perror("Connect failed");
+		fprintf(stderr, "Errno = %d\n", errno);
+		fflush(stderr);
 		pthread_exit(NULL);
 	}
 	sleep(1);
@@ -133,6 +144,10 @@ void *GoTrump(void *para) {
 				break;
 			}
 			cur_byte += write_byte;
+			if (cur_byte < need_byte) {
+				fprintf(stderr, "[Warning] String not write at once\n");
+				fflush(stderr);
+			}
 		}
 		if (is_failed) break;
 
@@ -149,6 +164,10 @@ void *GoTrump(void *para) {
 				break;
 			}
 			cur_byte += read_byte;
+			if (cur_byte < need_byte) {
+				fprintf(stderr, "[Warning] String not read at once\n");
+				fflush(stderr);
+			}
 		}
 		if (is_failed) break;
 
