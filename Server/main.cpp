@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
 
 	// Wait on SIGTERM
 	while (!is_sigterm) {
-		sleep(3);
+		sleep(1);
 	}
 
 	// Inform server SIGTERM

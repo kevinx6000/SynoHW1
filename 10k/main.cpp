@@ -94,11 +94,19 @@ bool Connect(int sockets[], int num, struct sockaddr_in server_addr) {
 
 // Send string to server
 bool SendString(int sockets[], int num) {
+	int need_byte = sizeof(char) * BUF_SIZE;
+	int write_byte = 0;
+	int cur_byte =0;
 	char *str = (char *)calloc(BUF_SIZE, sizeof(char));
 	for(int i = 0; i < num; i++) {
+		cur_byte = 0;
 		sprintf(str, "hi %d", i);
-		if (write(sockets[i], str, sizeof(char) * BUF_SIZE) == -1) {
-			return false;
+		while (cur_byte < need_byte) {
+			write_byte = write(sockets[i], str + cur_byte, need_byte - cur_byte);
+			if (write_byte == -1) {
+				return false;
+			}
+			cur_byte += write_byte;
 		}
 	}
 	free(str);
@@ -107,10 +115,18 @@ bool SendString(int sockets[], int num) {
 
 // Receive string from server
 bool RecvString(int sockets[], int num) {
+	int need_byte = sizeof(char) * BUF_SIZE;
+	int read_byte = 0;
+	int cur_byte =0;
 	char *str = (char *)calloc(BUF_SIZE, sizeof(char));
 	for(int i = 0; i < num; i++) {
-		if (read(sockets[i], str, sizeof(char) * BUF_SIZE) == -1) {
-			return false;
+		cur_byte =0;
+		while (cur_byte < need_byte) {
+			read_byte = read(sockets[i], str + cur_byte, need_byte - cur_byte);
+			if (read_byte == -1) {
+				return false;
+			}
+			cur_byte += read_byte;
 		}
 		printf("%d: %s\n", i, str);
 		fflush(stdout);

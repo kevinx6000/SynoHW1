@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <map>
 #include <queue>
+#include <string>
 
 class Server {
 	public:
@@ -30,19 +31,38 @@ class Server {
 
 	private:
 		void Initialize(int);
+		bool MakeNonblocking(int);
 
 		static void *ServeClient(void *);
 
 		int port_;
 		int server_socket_;
 		bool abort_flag_;
-		std::map<unsigned int, bool> is_used_;
-		std::map<unsigned int, bool> is_alive_;
-		std::queue<int> client_que_;
-		pthread_mutex_t used_mutex_;
+
+		// Whether client fd is alive (or closed)
 		pthread_mutex_t alive_mutex_;
+		std::map<unsigned int, bool> is_alive_;
+
+		// Whether client fd is served now
+		pthread_mutex_t used_mutex_;
+		std::map<unsigned int, bool> is_used_;
+
+		// Client fd job queue
+		typedef struct {
+			int fd;
+			uint32_t events;
+		}JobNode;
 		pthread_mutex_t que_mutex_;
+		std::queue<JobNode> client_que_;
 		pthread_cond_t que_not_empty_;
+
+		// Current content received from client fd
+		enum Status {READ, WRITE};
+		pthread_mutex_t content_mutex_;
+		std::map<unsigned int, std::string>cur_content_;
+		std::map<unsigned int, Status>cur_status_;
+		std::map<unsigned int, int>cur_byte_;
+
 		pthread_t pid[MAX_THREAD];
 };
 

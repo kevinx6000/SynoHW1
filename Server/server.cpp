@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <map>
 #include <queue>
+#include <string>
 
 // Constructor
 Server::Server(void) {
@@ -43,6 +44,7 @@ void Server::Initialize(int port) {
 	pthread_mutex_init(&this->used_mutex_, NULL);
 	pthread_mutex_init(&this->alive_mutex_, NULL);
 	pthread_mutex_init(&this->que_mutex_, NULL);
+	pthread_mutex_init(&this->content_mutex_, NULL);
 	pthread_cond_init(&this->que_not_empty_, NULL);
 }
 
@@ -56,15 +58,8 @@ bool Server::CreateSocket(void) {
 		return false;
 	}
 
-	// Get current flag
-	int file_flags = fcntl(this->server_socket_, F_GETFL, 0);
-	if (file_flags == -1) {
-		perror("[Error] Get socket flags failed");
-		return false;
-	}
-	file_flags |= O_NONBLOCK;
-	if (fcntl(this->server_socket_, F_SETFL, file_flags) == -1) {
-		perror("[Error] Set socket as non-blocking failed");
+	// Make server socket into non-blocking
+	if (!MakeNonblocking(this->server_socket_)) {
 		return false;
 	}
 
@@ -140,7 +135,7 @@ bool Server::AcceptConnection(void) {
 	while(!abort_flag_) {
 
 		// Wait until some fd is ready
-		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 3000);
+		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 2000);
 		if (numFD == -1 && !abort_flag_) {
 			perror("[Error] epoll_wait");
 			return false;
@@ -159,18 +154,31 @@ bool Server::AcceptConnection(void) {
 				while ((client_socket = accept(this->server_socket_, 
 						(struct sockaddr *) &client_addr, &addrlen)) >= 0) {
 
+					// Make client socket into non-blocking
+					if (!MakeNonblocking(client_socket)) {
+						close(client_socket);
+						continue;
+					}
+
 					// Record into epoll
-					ev.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+					ev.events = EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP;
 					ev.data.fd = client_socket;
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &ev) == -1) {
 						perror("[Warning] epoll_ctl: client socket");
 					} else {
+						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
 
 						// Update alive mark
 						pthread_mutex_lock(&this->alive_mutex_);
 						this->is_alive_[client_socket] = true;
 						pthread_mutex_unlock(&this->alive_mutex_);
-						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
+
+						// Update status to READ
+						pthread_mutex_lock(&this->content_mutex_);
+						this->cur_status_[client_socket] = READ;
+						this->cur_content_[client_socket] = "";
+						this->cur_byte_[client_socket] = 0;
+						pthread_mutex_unlock(&this->content_mutex_);
 					}
 				}
 
@@ -183,9 +191,14 @@ bool Server::AcceptConnection(void) {
 			// Client socket event (I/O or close)
 			} else {
 
+				// Retieve event details
+				JobNode jNode;
+				jNode.fd = events[i].data.fd;
+				jNode.events = events[i].events;
+
 				// Push client fd into queue, and signal
 				pthread_mutex_lock(&this->que_mutex_);
-				this->client_que_.push(events[i].data.fd);
+				this->client_que_.push(jNode);
 				pthread_cond_signal(&this->que_not_empty_);
 				pthread_mutex_unlock(&this->que_mutex_);
 			}
@@ -249,11 +262,11 @@ void *Server::ServeClient(void *para) {
 		}
 
 		// Not caused by SIGTERM
-		int client_fd = -1;
+		JobNode jNode;
 		if (!ptr->abort_flag_) {
 
 			// Queue is not empty, extract one client socket
-			client_fd = ptr->client_que_.front();
+			jNode = ptr->client_que_.front();
 			ptr->client_que_.pop();
 		}
 
@@ -263,93 +276,191 @@ void *Server::ServeClient(void *para) {
 		// SIGTERM
 		if (ptr->abort_flag_) break;
 
-		// Check if fd is alive
+		// Check alive:
+		// If client fd is not alive, should not serve it (discard event)
 		bool is_alive = false;
 		pthread_mutex_lock(&ptr->alive_mutex_);
-		is_alive = ptr->is_alive_[client_fd];
+		is_alive = ptr->is_alive_[jNode.fd];
 		pthread_mutex_unlock(&ptr->alive_mutex_);
+		if (!is_alive) continue;
 
-		// Check if fd is used
+		// Check served:
+		// If client fd is being served, should not serve it (push to queue)
 		bool is_used = false;
 		pthread_mutex_lock(&ptr->used_mutex_);
-		is_used = ptr->is_used_[client_fd];
-		if (!is_used) ptr->is_used_[client_fd] = true;
+		is_used = ptr->is_used_[jNode.fd];
+		if (!is_used) ptr->is_used_[jNode.fd] = true;
 		pthread_mutex_unlock(&ptr->used_mutex_);
-
-		// Closed
-		if (!is_alive) {
-			
-			// Update used mark to false
-			if (!is_used) {
-				pthread_mutex_lock(&ptr->used_mutex_);
-				ptr->is_used_[client_fd] = false;
-				pthread_mutex_unlock(&ptr->used_mutex_);
-			}
-
-		// Used
-		} else if (is_used) {
+		if (is_used) {
 
 			// Push back into queue
 			pthread_mutex_lock(&ptr->que_mutex_);
-			ptr->client_que_.push(client_fd);
+			ptr->client_que_.push(jNode);
 			pthread_mutex_unlock(&ptr->que_mutex_);
+			continue;
+		}
 
-		// Not used
-		// Serve this client (guaranteed that only this thread will serve it now)
+		// Check current status
+		// If status is not consistent, should not serve it (discard event)
+		Status cur_status;
+		pthread_mutex_lock(&ptr->content_mutex_);
+		cur_status = ptr->cur_status_[jNode.fd];
+		pthread_mutex_unlock(&ptr->content_mutex_);
+		if ((cur_status == READ && !(jNode.events & EPOLLIN))
+			|| (cur_status == WRITE && !(jNode.events & EPOLLOUT))){
+
+		// Otherwise, serve it!
 		} else {
 
-			// Receive string directly
-			// Will not block since epoll is ready before entering thread
-			char recv_string[kBufSiz];
-			int read_len = read(client_fd, recv_string, sizeof(char) * kBufSiz);
+			// Retrieve current content of string (read/write)
+			std::string cur_content = "";
+			int cur_byte = 0;
+			char str_buf[kBufSiz];
+			pthread_mutex_lock(&ptr->content_mutex_);
+			cur_content = ptr->cur_content_[jNode.fd];
+			cur_byte = ptr->cur_byte_[jNode.fd];
+			pthread_mutex_unlock(&ptr->content_mutex_);
+			memset(str_buf, 0, sizeof(str_buf));
+			sprintf(str_buf, "%s", cur_content.c_str());
 
-			// Client really sent string
-			if (read_len > 0) {
-				fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, client_fd);
-				if ((unsigned int)read_len < sizeof(char) * kBufSiz) {
-					fprintf(stderr, "[Error] read length is not enough (client %d)\n", client_fd);
-					fflush(stderr);
-				}
-
-				// Send back string directly
-				int write_len = write(client_fd, recv_string, sizeof(char) * kBufSiz);
-				if (write_len <= 0) {
-					perror("[Error] Send back string content failed");
-				}
-				fprintf(stderr, "[Info] String sent back (client %d)\n", client_fd);
-
-				// Error check
-				if (read_len != write_len) {
-					fprintf(stderr, "!!!: %d vs %d\n", read_len, write_len);
-					fflush(stderr);
-				}
-
-			// Close socket
-			} else if (read_len == 0) {
-
-				// Update alive mark
-				pthread_mutex_lock(&ptr->alive_mutex_);
-				ptr->is_alive_[client_fd] = false;
-				pthread_mutex_unlock(&ptr->alive_mutex_);
-
-				// Close socket
-				if (close(client_fd) == -1) {
-					perror("[Error] Close client socket failed");
-				}
-				fprintf(stderr, "[Info] Client %d is disconnected.\n", client_fd);
+			// Read event
+			if (cur_status == READ) {
 				
-			// Error
-			} else {
-				perror("[Error] read error");
-			}
+				// Read until byte reaches target
+				int need_byte = sizeof(char) * kBufSiz;
+				int read_byte = 0;
+				while (cur_byte < need_byte) {
+					read_byte = read(jNode.fd, str_buf + cur_byte, need_byte - cur_byte);
 
-			// Mark it as not used no matter closed or not
-			pthread_mutex_lock(&ptr->used_mutex_);
-			ptr->is_used_[client_fd] = false;
-			pthread_mutex_unlock(&ptr->used_mutex_);
+					// Append content
+					if (read_byte > 0) {
+						cur_byte += read_byte;
+
+					// Close or EAGAIN
+					} else {
+						break;
+					}
+				}
+
+				// Close socket connection
+				if (read_byte == 0) {
+
+					// Update alive mark
+					pthread_mutex_lock(&ptr->alive_mutex_);
+					ptr->is_alive_[jNode.fd] = false;
+					pthread_mutex_unlock(&ptr->alive_mutex_);
+
+					// Close socket
+					if (close(jNode.fd) == -1) {
+						perror("[Error] Close client socket failed");
+					}
+					fprintf(stderr, "[Info] Client %d is disconnected.\n", jNode.fd);
+
+				// Read error
+				} else if (read_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+					perror("[Error] Read error");
+
+				// Read successfully
+				} else {
+					cur_content = str_buf;
+					pthread_mutex_lock(&ptr->content_mutex_);
+
+					// Store back
+					ptr->cur_content_[jNode.fd] = cur_content;
+
+					// Not yet finished
+					if (cur_byte < need_byte) {
+						ptr->cur_byte_[jNode.fd] = cur_byte;
+
+					// Finished, change to WRITE mode
+					} else {
+						ptr->cur_status_[jNode.fd] = WRITE;
+						ptr->cur_byte_[jNode.fd] = 0;
+					}
+
+					pthread_mutex_unlock(&ptr->content_mutex_);
+
+					// Manually add write job into queue
+					JobNode jTmp;
+					jTmp.fd = jNode.fd;
+					jTmp.events = EPOLLOUT;
+					pthread_mutex_lock(&ptr->que_mutex_);
+					ptr->client_que_.push(jTmp);
+					pthread_cond_signal(&ptr->que_not_empty_);
+					pthread_mutex_unlock(&ptr->que_mutex_);
+				}
+
+			// Write event
+			} else if (cur_status == WRITE) {
+
+				// Write until byte reaches target
+				int need_byte = sizeof(char) * kBufSiz;
+				int write_byte = 0;
+				while (cur_byte < need_byte) {
+					write_byte = write(jNode.fd, str_buf + cur_byte, need_byte - cur_byte);
+
+					// Update remaining
+					if (write_byte > 0) {
+						cur_byte += write_byte;
+
+					// EAGAIN
+					} else {
+						break;
+					}
+				}
+
+				// Write error
+				if (write_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+					perror("[Error] Write error");
+
+				// Write successfully
+				} else {
+					pthread_mutex_lock(&ptr->content_mutex_);
+
+					// Not yet finished
+					if (cur_byte < need_byte) {
+						ptr->cur_byte_[jNode.fd] = cur_byte;
+
+					// Finished, change to READ mode
+					} else {
+						ptr->cur_status_[jNode.fd] = READ;
+						ptr->cur_content_[jNode.fd] = "";
+						ptr->cur_byte_[jNode.fd] = 0;
+					}
+
+					pthread_mutex_unlock(&ptr->content_mutex_);
+				}
+
+			// Unknown event??
+			} else {
+				fprintf(stderr, "[Error] Unknown event id = %d\n", cur_status);
+				fflush(stderr);
+			}
 		}
+
+		// Mark client fd as not being served
+		pthread_mutex_lock(&ptr->used_mutex_);
+		ptr->is_used_[jNode.fd] = false;
+		pthread_mutex_unlock(&ptr->used_mutex_);
 	}
 	pthread_exit(NULL);
+}
+
+// Make file descriptor to nonblocking
+bool Server::MakeNonblocking(int fd) {
+
+	// Get current flag
+	int file_flags = fcntl(fd, F_GETFL, 0);
+	if (file_flags == -1) {
+		perror("[Error] Get socket flags failed");
+		return false;
+	}
+	file_flags |= O_NONBLOCK;
+	if (fcntl(fd, F_SETFL, file_flags) == -1) {
+		perror("[Error] Set socket as non-blocking failed");
+		return false;
+	}
+	return true;
 }
 
 // Destructor
@@ -364,5 +475,6 @@ Server::~Server(void) {
 	pthread_mutex_destroy(&this->used_mutex_);
 	pthread_mutex_destroy(&this->alive_mutex_);
 	pthread_mutex_destroy(&this->que_mutex_);
+	pthread_mutex_destroy(&this->content_mutex_);
 	pthread_cond_destroy(&this->que_not_empty_);
 }
