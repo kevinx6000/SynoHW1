@@ -83,7 +83,7 @@ void *ServerThread(void *para) {
 	}
 
 	// Close socket
-	if (!server->CloseSocket()) {
+	if (!server->CloseAllSocket()) {
 		fprintf(stderr, "[Error] Program terminated abnormally.\n");
 		pthread_exit(NULL);
 	}

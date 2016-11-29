@@ -1,10 +1,10 @@
 #ifndef HW1_SERVER_SERVER_H_
 #define HW1_SERVER_SERVER_H_
 
-#define MAX_CLIENT 10002
-#define MAX_EVENT 10010
+#define MAX_CLIENT 20002
+#define MAX_EVENT 20010
 #define MAX_THREAD 1000
-#define kBufSiz 1023
+#define MAX_BUF 1023
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -12,7 +12,6 @@
 #include <pthread.h>
 #include <map>
 #include <queue>
-#include <string>
 
 class Server {
 	public:
@@ -27,7 +26,7 @@ class Server {
 
 		bool CreateSocket(void);
 		bool AcceptConnection(void);
-		bool CloseSocket(void);
+		bool CloseAllSocket(void);
 	
 	private:
 		// Job queue entry
@@ -36,25 +35,38 @@ class Server {
 			uint32_t events;
 		}JobNode;
 
+		// READ/WRITE status of client
+		enum Status {
+			READ,
+			WRITE
+		};
+
 	private:
 		void Initialize(int);
-		void ReadFromClient(Server *, const JobNode &);
-		void WriteToClient(Server *, const JobNode &);
+		void ReadFromClient(int);
+		void WriteToClient(int);
 		bool MakeNonblocking(int);
+		bool CloseClientSocket(int);
 
 		static void *ServeClient(void *);
 
+		// Server socket and port
 		int port_;
 		int server_socket_;
+
+		// Abort flag (for SIGTERM)
 		bool abort_flag_;
+
+		// Thread pool
+		pthread_t pid[MAX_THREAD];
 
 		// Whether client fd is alive (or closed)
 		pthread_mutex_t alive_mutex_;
 		std::map<unsigned int, bool> is_alive_;
 
 		// Whether client fd is served now
-		pthread_mutex_t used_mutex_;
-		std::map<unsigned int, bool> is_used_;
+		pthread_mutex_t served_mutex_;
+		std::map<unsigned int, bool> is_served_;
 
 		// Client fd job queue
 		pthread_mutex_t que_mutex_;
@@ -62,13 +74,10 @@ class Server {
 		pthread_cond_t que_not_empty_;
 
 		// Current content received from client fd
-		enum Status {READ, WRITE};
 		pthread_mutex_t content_mutex_;
-		std::map<unsigned int, std::string>cur_content_;
+		std::map<unsigned int, char *>cur_content_;
 		std::map<unsigned int, Status>cur_status_;
 		std::map<unsigned int, int>cur_byte_;
-
-		pthread_t pid[MAX_THREAD];
 };
 
 #endif
