@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
 
 	// Wait on SIGTERM
 	while (!is_sigterm) {
-		sleep(3);
+		sleep(1);
 	}
 
 	// Inform server SIGTERM
@@ -83,7 +83,7 @@ void *ServerThread(void *para) {
 	}
 
 	// Close socket
-	if (!server->CloseSocket()) {
+	if (!server->CloseAllSocket()) {
 		fprintf(stderr, "[Error] Program terminated abnormally.\n");
 		pthread_exit(NULL);
 	}

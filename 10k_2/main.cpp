@@ -68,6 +68,10 @@ bool CreateSocket(int sockets[], int num) {
 
 // Connect, send, receive at once
 bool CWR(int sockets[], int num, struct sockaddr_in server_addr) {
+	int need_byte = sizeof(char) * BUF_SIZE;
+	int write_byte = 0;
+	int read_byte = 0;
+	int cur_byte = 0;
 	char *send = (char *)calloc(BUF_SIZE, sizeof(char));
 	char *recv = (char *)calloc(BUF_SIZE, sizeof(char));
 	for(int i = 0; i < num; i++) {
@@ -75,12 +79,22 @@ bool CWR(int sockets[], int num, struct sockaddr_in server_addr) {
 				sizeof(server_addr)) == -1) {
 			return false;
 		}
+		cur_byte = 0;
 		sprintf(send, "hi %d", i);
-		if (write(sockets[i], send, sizeof(char) * BUF_SIZE) == -1) {
-			return false;
+		while (cur_byte < need_byte) {
+			write_byte = write(sockets[i], send + cur_byte, need_byte - cur_byte);
+			if (write_byte == -1) {
+				return false;
+			}
+			cur_byte += write_byte;
 		}
-		if (read(sockets[i], recv, sizeof(char) * BUF_SIZE) == -1) {
-			return false;
+		cur_byte = 0;
+		while (cur_byte < need_byte) {
+			read_byte = read(sockets[i], recv + cur_byte, need_byte - cur_byte);
+			if (read_byte == -1) {
+				return false;
+			}
+			cur_byte += read_byte;
 		}
 		printf("%d: %s\n", i, recv);
 		fflush(stdout);

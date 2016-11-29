@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <map>
 #include <queue>
 
@@ -33,14 +35,15 @@ void Server::Initialize(int port) {
 	this->abort_flag_ = false;
 	this->server_socket_ = -1;
 	this->is_alive_.clear();
-	this->is_used_.clear();
+	this->is_served_.clear();
 	this->port_ = port;
 	while (!this->client_que_.empty()) this->client_que_.pop();
 
 	// Create mutex and conditional variables
-	pthread_mutex_init(&this->used_mutex_, NULL);
+	pthread_mutex_init(&this->served_mutex_, NULL);
 	pthread_mutex_init(&this->alive_mutex_, NULL);
 	pthread_mutex_init(&this->que_mutex_, NULL);
+	pthread_mutex_init(&this->content_mutex_, NULL);
 	pthread_cond_init(&this->que_not_empty_, NULL);
 }
 
@@ -51,6 +54,11 @@ bool Server::CreateSocket(void) {
 	this->server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
 	if (this->server_socket_ == -1) {
 		perror("[Error] Create socket failed");
+		return false;
+	}
+
+	// Make server socket into non-blocking
+	if (!MakeNonblocking(this->server_socket_)) {
 		return false;
 	}
 
@@ -70,8 +78,8 @@ bool Server::CreateSocket(void) {
 	}
 
 	// Bind address
-	int bind_result = bind(this->server_socket_, (struct sockaddr *)&server_addr,
-			sizeof(server_addr));
+	int bind_result = bind(this->server_socket_,
+			(struct sockaddr *)&server_addr, sizeof(server_addr));
 	if (bind_result == -1) {
 		perror("[Error] Bind address failed");
 		return false;
@@ -111,7 +119,7 @@ bool Server::AcceptConnection(void) {
 
 	// Monitor server socket
 	struct epoll_event ev;
-	ev.events = EPOLLIN;
+	ev.events = EPOLLIN | EPOLLET;
 	ev.data.fd = server_socket_;
 	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, this->server_socket_, &ev) == -1) {
 		perror("[Error] epoll_ctl");
@@ -119,14 +127,14 @@ bool Server::AcceptConnection(void) {
 	}
 
 	// Server control 
-	int numFD;
+	int numFD = 0;
 	struct epoll_event events[MAX_EVENT];
 	struct sockaddr_in client_addr;
 	socklen_t addrlen = sizeof(client_addr);
 	while(!abort_flag_) {
 
 		// Wait until some fd is ready
-		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 3000);
+		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 2000);
 		if (numFD == -1 && !abort_flag_) {
 			perror("[Error] epoll_wait");
 			return false;
@@ -140,32 +148,57 @@ bool Server::AcceptConnection(void) {
 			// Server socket event
 			if (events[i].data.fd == this->server_socket_) {
 
-				// Accept one client and record into epoll
-				int client_socket = accept(this->server_socket_,
-					(struct sockaddr *) &client_addr, &addrlen);
-				if (client_socket == -1) {
-					perror("[Warning] Accept connection failed");
-				} else {
-					ev.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+				// Accept one or more client
+				int client_socket = -1;
+				while ((client_socket = accept(this->server_socket_, 
+						(struct sockaddr *) &client_addr, &addrlen)) >= 0) {
+
+					// Make client socket into non-blocking
+					if (!MakeNonblocking(client_socket)) {
+						close(client_socket);
+						continue;
+					}
+
+					// Record into epoll
+					ev.events = EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP;
 					ev.data.fd = client_socket;
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &ev) == -1) {
 						perror("[Warning] epoll_ctl: client socket");
 					} else {
+						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
 
 						// Update alive mark
 						pthread_mutex_lock(&this->alive_mutex_);
 						this->is_alive_[client_socket] = true;
 						pthread_mutex_unlock(&this->alive_mutex_);
-						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
+
+						// Update status to READ
+						char *str_buf = (char *)calloc(MAX_BUF, sizeof(char));
+						pthread_mutex_lock(&this->content_mutex_);
+						this->cur_status_[client_socket] = READ;
+						this->cur_byte_[client_socket] = 0;
+						this->cur_content_[client_socket] = str_buf;
+						pthread_mutex_unlock(&this->content_mutex_);
 					}
+				}
+
+				// Reach end (client_socket == -1) or error
+				if (errno == EAGAIN || errno == EWOULDBLOCK) {continue;}
+				else {
+					perror("[Error] Accept failed");
 				}
 
 			// Client socket event (I/O or close)
 			} else {
 
+				// Retieve event details
+				JobNode jNode;
+				jNode.fd = events[i].data.fd;
+				jNode.events = events[i].events;
+
 				// Push client fd into queue, and signal
 				pthread_mutex_lock(&this->que_mutex_);
-				this->client_que_.push(events[i].data.fd);
+				this->client_que_.push(jNode);
 				pthread_cond_signal(&this->que_not_empty_);
 				pthread_mutex_unlock(&this->que_mutex_);
 			}
@@ -179,36 +212,6 @@ bool Server::AcceptConnection(void) {
 	}
 
 	// All operation finished safely
-	return true;
-}
-
-// Close socket
-bool Server::CloseSocket(void) {
-
-	// Client sockets
-	std::map<unsigned int, bool>::iterator m_itr;
-	for (m_itr = this->is_alive_.begin(); m_itr != this->is_alive_.end(); m_itr++) {
-
-		// Still alive
-		if (m_itr->second) {
-			if (close(m_itr->first) == -1) {
-				perror("[Error] Close client socket during signal handler failed");
-				return false;
-			} else {
-				fprintf(stderr, "[Info] Client socket %d closed safely.\n", m_itr->first);
-			}
-		}
-	}
-
-	// Server socket
-	if (close(this->server_socket_) == -1) {
-		perror("[Error] Close socket failed");
-		return false;
-	} else {
-		fprintf(stderr, "[Info] Server socket closed safely.\n");
-		this->server_socket_ = -1;
-	}
-
 	return true;
 }
 
@@ -229,11 +232,11 @@ void *Server::ServeClient(void *para) {
 		}
 
 		// Not caused by SIGTERM
-		int client_fd = -1;
+		JobNode jNode;
 		if (!ptr->abort_flag_) {
 
 			// Queue is not empty, extract one client socket
-			client_fd = ptr->client_que_.front();
+			jNode = ptr->client_que_.front();
 			ptr->client_que_.pop();
 		}
 
@@ -243,83 +246,286 @@ void *Server::ServeClient(void *para) {
 		// SIGTERM
 		if (ptr->abort_flag_) break;
 
-		// Check if fd is used
-		bool is_used = false;
-		pthread_mutex_lock(&ptr->used_mutex_);
-		is_used = ptr->is_used_[client_fd];
-		if (!is_used) ptr->is_used_[client_fd] = true;
-		pthread_mutex_unlock(&ptr->used_mutex_);
+		// Check alive:
+		// If client fd is not alive, should not serve it (discard event)
+		bool is_alive = false;
+		pthread_mutex_lock(&ptr->alive_mutex_);
+		is_alive = ptr->is_alive_[jNode.fd];
+		pthread_mutex_unlock(&ptr->alive_mutex_);
+		if (!is_alive) continue;
 
-		// Used
-		if (is_used) {
+		// Check served:
+		// If client fd is being served, should not serve it (push to queue)
+		bool is_served = false;
+		pthread_mutex_lock(&ptr->served_mutex_);
+		is_served = ptr->is_served_[jNode.fd];
+		if (!is_served) ptr->is_served_[jNode.fd] = true;
+		pthread_mutex_unlock(&ptr->served_mutex_);
+		if (is_served) {
 
 			// Push back into queue
 			pthread_mutex_lock(&ptr->que_mutex_);
-			ptr->client_que_.push(client_fd);
+			ptr->client_que_.push(jNode);
 			pthread_mutex_unlock(&ptr->que_mutex_);
 			continue;
+		}
 
-		// Not used
-		// Serve this client (guaranteed that only this thread will serve it now)
+		// Check current status
+		// If status is not consistent, should not serve it (discard event)
+		Status cur_status;
+		pthread_mutex_lock(&ptr->content_mutex_);
+		cur_status = ptr->cur_status_[jNode.fd];
+		pthread_mutex_unlock(&ptr->content_mutex_);
+		if ((cur_status == READ && !(jNode.events & EPOLLIN))
+			|| (cur_status == WRITE && !(jNode.events & EPOLLOUT))){
+
+		// Otherwise, serve it!
 		} else {
 
-			// Receive string directly
-			// Will not block since epoll is ready before entering thread
-			char recv_string[kBufSiz];
-			int read_len = read(client_fd, recv_string, sizeof(char) * kBufSiz);
+			// Read event (and write if completed)
+			if (cur_status == READ) {
+				ptr->ReadFromClient(jNode.fd);
 
-			// Client really sent string
-			if (read_len > 0) {
-				fprintf(stderr, "[Info] String = %s (client %d)\n", recv_string, client_fd);
+			// Write event
+			} else if (cur_status == WRITE) {
+				ptr->WriteToClient(jNode.fd);
 
-				// Send back string directly
-				int write_len = write(client_fd, recv_string, sizeof(char) * kBufSiz);
-				if (write_len <= 0) {
-					perror("[Error] Send back string content failed");
-				}
-				fprintf(stderr, "[Info] String sent back (client %d)\n", client_fd);
-
-				// Error check
-				if (read_len != write_len) {
-					fprintf(stderr, "!!!: %d vs %d\n", read_len, write_len);
-					fflush(stderr);
-				}
-
-			// Close socket
+			// Unknown event??
 			} else {
-
-				// Update alive mark
-				pthread_mutex_lock(&ptr->alive_mutex_);
-				ptr->is_alive_[client_fd] = false;
-				pthread_mutex_unlock(&ptr->alive_mutex_);
-
-				// Close socket
-				if (close(client_fd) == -1) {
-					perror("[Error] Close client socket failed");
-				}
-				fprintf(stderr, "[Info] Client %d is disconnected.\n", client_fd);
+				fprintf(stderr, "[Error] Unknown event id = %d\n", cur_status);
+				fflush(stderr);
 			}
-
-			// Mark it as not used no matter closed or not
-			pthread_mutex_lock(&ptr->used_mutex_);
-			ptr->is_used_[client_fd] = false;
-			pthread_mutex_unlock(&ptr->used_mutex_);
 		}
+
+		// Mark client fd as not being served
+		pthread_mutex_lock(&ptr->served_mutex_);
+		ptr->is_served_[jNode.fd] = false;
+		pthread_mutex_unlock(&ptr->served_mutex_);
 	}
 	pthread_exit(NULL);
+}
+
+// Make file descriptor to nonblocking
+bool Server::MakeNonblocking(int fd) {
+
+	// Get current flag
+	int file_flags = fcntl(fd, F_GETFL, 0);
+	if (file_flags == -1) {
+		perror("[Error] Get socket flags failed");
+		return false;
+	}
+	file_flags |= O_NONBLOCK;
+	if (fcntl(fd, F_SETFL, file_flags) == -1) {
+		perror("[Error] Set socket as non-blocking failed");
+		return false;
+	}
+	return true;
+}
+
+// Read string from client
+void Server::ReadFromClient(int client_fd) {
+	int cur_byte = 0;
+	char *cur_content = NULL;
+
+	// Retrieve current content of string (read/write)
+	pthread_mutex_lock(&this->content_mutex_);
+	cur_byte = this->cur_byte_[client_fd];
+	cur_content = this->cur_content_[client_fd];
+	pthread_mutex_unlock(&this->content_mutex_);
+
+	// Read until byte reaches target
+	int need_byte = sizeof(char) * MAX_BUF;
+	int read_byte = 0;
+	while (cur_byte < need_byte) {
+		read_byte = read(client_fd, cur_content + cur_byte, need_byte - cur_byte);
+
+		// Append content
+		if (read_byte > 0) {
+			cur_byte += read_byte;
+
+		// Close or EAGAIN or Error
+		} else {
+
+			// Interrupt other than SIGTERM, restart
+			if (read_byte == -1 && errno == EINTR && !this->abort_flag_) {
+				continue;
+			}
+			break;
+		}
+	}
+
+	// Close socket connection
+	if (read_byte == 0) {
+
+		// Close socket
+		if (!this->CloseClientSocket(client_fd)) {
+			perror("[Error] Close client socket failed");
+		}
+		fprintf(stderr, "[Info] Client %d is disconnected.\n", client_fd);
+
+	// Read error
+	} else if (read_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+		perror("[Error] Read error");
+
+		// Close socket
+		if (!this->CloseClientSocket(client_fd)) {
+			perror("[Error] Close client socket failed");
+		}
+		fprintf(stderr, "[Info] Server terminates connection to client %d\n", client_fd);
+
+	// Read successfully
+	} else {
+		pthread_mutex_lock(&this->content_mutex_);
+
+		// Not yet finished
+		if (cur_byte < need_byte) {
+			this->cur_byte_[client_fd] = cur_byte;
+
+		// Finished, change to WRITE mode
+		} else {
+			this->cur_status_[client_fd] = WRITE;
+			this->cur_byte_[client_fd] = 0;
+		}
+
+		pthread_mutex_unlock(&this->content_mutex_);
+
+		// Manually call WRITE if finished
+		if (cur_byte == need_byte) {
+			this->WriteToClient(client_fd);
+		}
+	}
+}
+
+// Write string to client
+void Server::WriteToClient(int client_fd) {
+	int cur_byte = 0;
+	char *cur_content = NULL;
+
+	// Retrieve current content of string (read/write)
+	pthread_mutex_lock(&this->content_mutex_);
+	cur_byte = this->cur_byte_[client_fd];
+	cur_content = this->cur_content_[client_fd];
+	pthread_mutex_unlock(&this->content_mutex_);
+
+	// Write until byte reaches target
+	int need_byte = sizeof(char) * MAX_BUF;
+	int write_byte = 0;
+	while (cur_byte < need_byte) {
+		write_byte = write(client_fd, cur_content + cur_byte, need_byte - cur_byte);
+
+		// Update remaining
+		if (write_byte > 0) {
+			cur_byte += write_byte;
+
+		// EAGAIN or Error
+		} else {
+
+			// Interrupt other than SIGTERM, restart
+			if (write_byte == -1 && errno == EINTR && !this->abort_flag_) {
+				continue;
+			}
+			break;
+		}
+	}
+
+	// Write error
+	if (write_byte == -1 && errno != EAGAIN && errno != EWOULDBLOCK) {
+		perror("[Error] Write error");
+
+		// Close socket
+		if (!this->CloseClientSocket(client_fd)) {
+			perror("[Error] Close client socket failed");
+		}
+		fprintf(stderr, "[Info] Server terminates connection to client %d.\n", client_fd);
+
+	// Write successfully
+	} else {
+		memset(cur_content, 0, sizeof(char) * MAX_BUF);
+		pthread_mutex_lock(&this->content_mutex_);
+
+		// Not yet finished
+		if (cur_byte < need_byte) {
+			this->cur_byte_[client_fd] = cur_byte;
+
+		// Finished, change to READ mode
+		} else {
+			this->cur_status_[client_fd] = READ;
+			this->cur_byte_[client_fd] = 0;
+		}
+
+		pthread_mutex_unlock(&this->content_mutex_);
+	}
+}
+
+// Close client socket
+bool Server::CloseClientSocket(int client_fd) {
+
+	// Update alive mark
+	pthread_mutex_lock(&this->alive_mutex_);
+	this->is_alive_[client_fd] = false;
+	pthread_mutex_unlock(&this->alive_mutex_);
+
+	// Free up content
+	char *str_tmp = NULL;
+	pthread_mutex_lock(&this->content_mutex_);
+	str_tmp = this->cur_content_[client_fd];
+	this->cur_content_[client_fd] = NULL;
+	pthread_mutex_unlock(&this->content_mutex_);
+	if (str_tmp != NULL) {
+		free(str_tmp);
+	}
+
+	// Close socket
+	if (close(client_fd) == -1) {
+		return false;
+	}
+	return true;
+}
+
+// Close all socket
+bool Server::CloseAllSocket(void) {
+
+	// Client sockets
+	std::map<unsigned int, bool>::iterator m_itr;
+	for (m_itr = this->is_alive_.begin(); m_itr != this->is_alive_.end(); m_itr++) {
+		bool is_alive = m_itr->second;
+
+		// Still alive
+		if (is_alive) {
+			int client_fd = m_itr->first;
+			if (!this->CloseClientSocket(client_fd)) {
+				perror("[Error] Close client socket during signal handler failed");
+				return false;
+			} else {
+				fprintf(stderr, "[Info] Client socket %d closed safely.\n", client_fd);
+			}
+		}
+	}
+
+	// Server socket
+	if (close(this->server_socket_) == -1) {
+		perror("[Error] Close socket failed");
+		return false;
+	} else {
+		fprintf(stderr, "[Info] Server socket closed safely.\n");
+		this->server_socket_ = -1;
+	}
+
+	return true;
 }
 
 // Destructor
 Server::~Server(void) {
 
 	// Clear up map and queue
-	this->is_used_.clear();
+	this->is_served_.clear();
 	this->is_alive_.clear();
 	while (!this->client_que_.empty()) this->client_que_.pop();
 
 	// Destroy mutex and conditional variable
-	pthread_mutex_destroy(&this->used_mutex_);
+	pthread_mutex_destroy(&this->served_mutex_);
 	pthread_mutex_destroy(&this->alive_mutex_);
 	pthread_mutex_destroy(&this->que_mutex_);
+	pthread_mutex_destroy(&this->content_mutex_);
 	pthread_cond_destroy(&this->que_not_empty_);
 }

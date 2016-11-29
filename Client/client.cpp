@@ -95,11 +95,36 @@ bool Client::SendString(const std::string &input_string) {
 	} else {
 
 		// Send string directly
+		int need_byte = sizeof(char) * kBufSiz;
+		int write_byte = 0;
+		int cur_byte = 0;
 		char *send_string = (char *)calloc(kBufSiz, sizeof(char));
 		sprintf(send_string, "%s", input_string.c_str());
-		if (write(this->client_socket_, send_string, sizeof(char) * kBufSiz) == -1) {
-			perror("[Error] String content sending failed");
-			return false;
+		while (cur_byte < need_byte) {
+			write_byte = write(this->client_socket_, send_string + cur_byte, need_byte - cur_byte);
+
+			// Error
+			if (write_byte == -1) {
+
+				// Interrupt
+				if (errno == EINTR) {
+
+					// Other than SIGTERM, restart
+					if (!is_abort_) {
+						continue;
+
+					// SIGTERM, return
+					} else {
+						return false;
+					}
+
+				// Other fail
+				} else {
+					perror("[Error] Write failed");
+					return false;
+				}
+			}
+			cur_byte += write_byte;
 		}
 		free(send_string);
 
@@ -112,13 +137,40 @@ bool Client::SendString(const std::string &input_string) {
 bool Client::RecvString(std::string &output_string) {
 
 	// Receive string directly
+	int need_byte = sizeof(char) * kBufSiz;
+	int read_byte = 0;
+	int cur_byte = 0;
 	char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
-	if (read(this->client_socket_, recv_string, sizeof(char) * kBufSiz) == -1) {
-		perror("[Error] Receive string content failed");
-		return false;
+	while (cur_byte < need_byte) {
+		read_byte = read(this->client_socket_, recv_string + cur_byte, need_byte - cur_byte);
+
+		// Error
+		if (read_byte == -1) {
+
+			// Interrupt
+			if (errno == EINTR) {
+
+				// Other than SIGTERM, restart
+				if (!is_abort_) {
+					continue;
+
+				// SIGTERM
+				} else {
+					return false;
+				}
+
+			// Other fail
+			} else {
+				perror("[Error] Read failed");
+				return false;
+			}
+		}
+		cur_byte += read_byte;
 	}
 	output_string = recv_string;
 	free(recv_string);
+
+	// All pass
 	return true;
 }
 
