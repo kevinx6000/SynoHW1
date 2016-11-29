@@ -389,14 +389,10 @@ void Server::ReadFromClient(int client_fd) {
 
 		pthread_mutex_unlock(&this->content_mutex_);
 
-		// Manually add write job into queue
-		JobNode jTmp;
-		jTmp.fd = client_fd;
-		jTmp.events = EPOLLOUT;
-		pthread_mutex_lock(&this->que_mutex_);
-		this->client_que_.push(jTmp);
-		pthread_cond_signal(&this->que_not_empty_);
-		pthread_mutex_unlock(&this->que_mutex_);
+		// Manually call WRITE if finished
+		if (cur_byte == need_byte) {
+			this->WriteToClient(client_fd);
+		}
 	}
 }
 
