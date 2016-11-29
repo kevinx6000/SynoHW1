@@ -28,8 +28,7 @@ Client::Client(const char *IP, const int port) {
 void Client::Initialize(const char *IP, const int port) {
 	is_abort_ = false;
 	this->client_socket_ = -1;
-	this->server_IP_ = (char *)malloc(sizeof(char)*(strlen(IP)+1));
-	strcpy(this->server_IP_, IP);
+	this->server_IP_ = IP;
 	this->server_port_ = port;
 }
 
@@ -46,7 +45,7 @@ bool Client::CreateSocket(void) {
 	// Set server address
 	memset(&this->server_addr_, 0, sizeof(this->server_addr_));
 	this->server_addr_.sin_family = AF_INET;
-	this->server_addr_.sin_addr.s_addr = inet_addr(this->server_IP_);
+	this->server_addr_.sin_addr.s_addr = inet_addr(this->server_IP_.c_str());
 	this->server_addr_.sin_port = htons(this->server_port_);
 
 	// All pass
@@ -89,7 +88,7 @@ bool Client::SendAndRecv(const std::string &input, std::string &output) {
 bool Client::SendString(const std::string &input_string) {
 
 	// Input length too long
-	if (input_string.length() >= MAX_BUF) {
+	if (input_string.length() >= Client::kMaxBuf) {
 		fprintf(stderr, "[Error] Length of input string is too long.\n");
 		return false;
 	
@@ -97,45 +96,37 @@ bool Client::SendString(const std::string &input_string) {
 	} else {
 
 		// Send string directly
-		int need_byte = sizeof(char) * MAX_BUF;
+		int need_byte = sizeof(char) * Client::kMaxBuf;
 		int write_byte = 0;
 		int cur_byte = 0;
-		bool is_fail = false;
-		char *send_string = (char *)calloc(MAX_BUF, sizeof(char));
-		sprintf(send_string, "%s", input_string.c_str());
+		std::string send_string = input_string;
+		send_string.resize(Client::kMaxBuf, 0);
 		while (cur_byte < need_byte) {
-			write_byte = write(this->client_socket_, send_string + cur_byte, need_byte - cur_byte);
+			write_byte = write(this->client_socket_, send_string.c_str() + cur_byte, need_byte - cur_byte);
+
+			// SIGTERM
+			if (is_abort_) {
+				return false;
+			}
 
 			// Error
 			if (write_byte == -1) {
 
-				// Interrupt
+				// Interrupt other than SIGTERM: restart
 				if (errno == EINTR) {
-
-					// Other than SIGTERM, restart
-					if (!is_abort_) {
-						continue;
-
-					// SIGTERM, return
-					} else {
-						is_fail = true;
-						break;
-					}
+					continue;
 
 				// Other fail
 				} else {
 					perror("[Error] Write failed");
-					is_fail = true;
-					break;
+					return false;
 				}
 			}
 			cur_byte += write_byte;
 		}
-		free(send_string);
 
 		// All pass
-		if (!is_fail) return true;
-		else return false;
+		return true;
 	}
 }
 
@@ -143,29 +134,26 @@ bool Client::SendString(const std::string &input_string) {
 bool Client::RecvString(std::string &output_string) {
 
 	// Receive string directly
-	int need_byte = sizeof(char) * MAX_BUF;
+	int need_byte = sizeof(char) * Client::kMaxBuf;
 	int read_byte = 0;
 	int cur_byte = 0;
 	bool is_fail = false;
-	char *recv_string = (char *)calloc(MAX_BUF, sizeof(char));
+	char *recv_string = (char *)calloc(Client::kMaxBuf, sizeof(char));
 	while (cur_byte < need_byte) {
 		read_byte = read(this->client_socket_, recv_string + cur_byte, need_byte - cur_byte);
+
+		// SIGTERM
+		if (is_abort_) {
+			is_fail = true;
+			break;
+		}
 
 		// Error
 		if (read_byte == -1) {
 
-			// Interrupt
+			// Interrupt other than SIGTERM
 			if (errno == EINTR) {
-
-				// Other than SIGTERM, restart
-				if (!is_abort_) {
-					continue;
-
-				// SIGTERM
-				} else {
-					is_fail = true;
-					break;;
-				}
+				continue;
 
 			// Other fail
 			} else {
@@ -177,15 +165,14 @@ bool Client::RecvString(std::string &output_string) {
 		cur_byte += read_byte;
 	}
 
-	// All pass
+	// Copy output if not failed
 	if (!is_fail) {
 		output_string = recv_string;
-		free(recv_string);
-		return true;
-	} else {
-		free(recv_string);
-		return false;
 	}
+	free(recv_string);
+
+	// Return result
+	return !is_fail;
 }
 
 // Close socket
@@ -202,9 +189,7 @@ bool Client::CloseSocket(void) {
 
 // Destructor
 Client::~Client(void) {
-
-	// Destroy old variables
-	free(this->server_IP_);
+	// Do nothing
 }
 
 // Get abort flag

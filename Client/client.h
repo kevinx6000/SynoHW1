@@ -6,8 +6,6 @@
 #include <netinet/in.h>
 #include <string>
 
-#define MAX_BUF 1023
-
 class Client {
 	public:
 		Client(void);
@@ -25,6 +23,8 @@ class Client {
 		bool GetAbortFlag(void);
 		void SetAbortFlag(bool);
 
+		static const int kMaxBuf = 1023;
+
 	private:
 		void Initialize(const char *, const int);
 		bool SendString(const std::string &);
@@ -32,7 +32,7 @@ class Client {
 
 		int client_socket_;
 		int server_port_;
-		char *server_IP_;
+		std::string server_IP_;
 		struct sockaddr_in server_addr_;
 		bool is_abort_;
 };
