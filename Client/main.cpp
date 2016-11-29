@@ -18,9 +18,9 @@
 bool is_sigterm;
 
 // Function prototype
-bool RegisterSignal(void);
-void SignalHandler(int);
-void *ClientThread(void *);
+static bool RegisterSignal(void);
+static void SignalHandler(int);
+static void *ClientThread(void *);
 
 int main(int argc, char *argv[]) {
 
@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
 
 	// Wait on SIGTERM
 	while (!is_sigterm) {
-		sleep(3);
+		sleep(1);
 	}
 
 	// Inform server SIGTERM
@@ -120,7 +120,7 @@ void *ClientThread(void *para) {
 		}
 
 		// Wait until stdin is ready, or abort
-		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 3000);
+		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 2000);
 		if (numFD == -1 && !client->GetAbortFlag()) {
 			perror("[Error] epoll_wait");
 			pthread_exit(NULL);

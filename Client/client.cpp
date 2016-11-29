@@ -88,17 +88,20 @@ bool Client::SendAndRecv(const std::string &input, std::string &output) {
 // Send string to server
 bool Client::SendString(const std::string &input_string) {
 
-	// Check string length
-	if (input_string.length() >= kBufSiz) {
+	// Input length too long
+	if (input_string.length() >= MAX_BUF) {
 		fprintf(stderr, "[Error] Length of input string is too long.\n");
 		return false;
+	
+	// Send it
 	} else {
 
 		// Send string directly
-		int need_byte = sizeof(char) * kBufSiz;
+		int need_byte = sizeof(char) * MAX_BUF;
 		int write_byte = 0;
 		int cur_byte = 0;
-		char *send_string = (char *)calloc(kBufSiz, sizeof(char));
+		bool is_fail = false;
+		char *send_string = (char *)calloc(MAX_BUF, sizeof(char));
 		sprintf(send_string, "%s", input_string.c_str());
 		while (cur_byte < need_byte) {
 			write_byte = write(this->client_socket_, send_string + cur_byte, need_byte - cur_byte);
@@ -115,13 +118,15 @@ bool Client::SendString(const std::string &input_string) {
 
 					// SIGTERM, return
 					} else {
-						return false;
+						is_fail = true;
+						break;
 					}
 
 				// Other fail
 				} else {
 					perror("[Error] Write failed");
-					return false;
+					is_fail = true;
+					break;
 				}
 			}
 			cur_byte += write_byte;
@@ -129,7 +134,8 @@ bool Client::SendString(const std::string &input_string) {
 		free(send_string);
 
 		// All pass
-		return true;
+		if (!is_fail) return true;
+		else return false;
 	}
 }
 
@@ -137,10 +143,11 @@ bool Client::SendString(const std::string &input_string) {
 bool Client::RecvString(std::string &output_string) {
 
 	// Receive string directly
-	int need_byte = sizeof(char) * kBufSiz;
+	int need_byte = sizeof(char) * MAX_BUF;
 	int read_byte = 0;
 	int cur_byte = 0;
-	char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
+	bool is_fail = false;
+	char *recv_string = (char *)calloc(MAX_BUF, sizeof(char));
 	while (cur_byte < need_byte) {
 		read_byte = read(this->client_socket_, recv_string + cur_byte, need_byte - cur_byte);
 
@@ -156,22 +163,29 @@ bool Client::RecvString(std::string &output_string) {
 
 				// SIGTERM
 				} else {
-					return false;
+					is_fail = true;
+					break;;
 				}
 
 			// Other fail
 			} else {
 				perror("[Error] Read failed");
-				return false;
+				is_fail = true;
+				break;
 			}
 		}
 		cur_byte += read_byte;
 	}
-	output_string = recv_string;
-	free(recv_string);
 
 	// All pass
-	return true;
+	if (!is_fail) {
+		output_string = recv_string;
+		free(recv_string);
+		return true;
+	} else {
+		free(recv_string);
+		return false;
+	}
 }
 
 // Close socket
