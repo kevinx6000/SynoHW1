@@ -5,6 +5,7 @@
 #define MAX_EVENT 20010
 #define MAX_THREAD 1000
 #define MAX_BUF 1023
+#define MAX_FD 65536
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -81,7 +82,7 @@ class Server {
 		pthread_cond_t que_not_empty_;
 
 		// Current content received from client fd
-		Content content_[65535];
+		Content content_[MAX_FD];
 };
 
 #endif

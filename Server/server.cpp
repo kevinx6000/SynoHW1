@@ -46,6 +46,23 @@ void Server::Initialize(int port) {
 	pthread_cond_init(&this->que_not_empty_, NULL);
 }
 
+// Make file descriptor to nonblocking
+bool Server::MakeNonblocking(int fd) {
+
+	// Get current flag
+	int file_flags = fcntl(fd, F_GETFL, 0);
+	if (file_flags == -1) {
+		perror("[Error] Get socket flags failed");
+		return false;
+	}
+	file_flags |= O_NONBLOCK;
+	if (fcntl(fd, F_SETFL, file_flags) == -1) {
+		perror("[Error] Set socket as non-blocking failed");
+		return false;
+	}
+	return true;
+}
+
 // Create socket
 bool Server::CreateSocket(void) {
 
@@ -152,6 +169,13 @@ bool Server::AcceptConnection(void) {
 				while ((client_socket = accept(this->server_socket_, 
 						(struct sockaddr *) &client_addr, &addrlen)) >= 0) {
 
+					// Exceed maximum available fd, close
+					if (client_socket >= MAX_FD) {
+						fprintf(stderr, "[Warning] fd >= %d, socket closed.\n", MAX_FD);
+						close(client_socket);
+						continue;
+					}
+
 					// Make client socket into non-blocking
 					if (!MakeNonblocking(client_socket)) {
 						close(client_socket);
@@ -178,9 +202,8 @@ bool Server::AcceptConnection(void) {
 					}
 				}
 
-				// Reach end (client_socket == -1) or error
-				if (errno == EAGAIN || errno == EWOULDBLOCK) {continue;}
-				else {
+				// Error other than EAGAIN and EWOULDBLOCK
+				if (errno != EAGAIN && errno != EWOULDBLOCK) {
 					perror("[Error] Accept failed");
 				}
 
@@ -299,23 +322,6 @@ void *Server::ServeClient(void *para) {
 	pthread_exit(NULL);
 }
 
-// Make file descriptor to nonblocking
-bool Server::MakeNonblocking(int fd) {
-
-	// Get current flag
-	int file_flags = fcntl(fd, F_GETFL, 0);
-	if (file_flags == -1) {
-		perror("[Error] Get socket flags failed");
-		return false;
-	}
-	file_flags |= O_NONBLOCK;
-	if (fcntl(fd, F_SETFL, file_flags) == -1) {
-		perror("[Error] Set socket as non-blocking failed");
-		return false;
-	}
-	return true;
-}
-
 // Read string from client
 void Server::ReadFromClient(int client_fd) {
 	int cur_byte = 0;
@@ -331,15 +337,24 @@ void Server::ReadFromClient(int client_fd) {
 	while (cur_byte < need_byte) {
 		read_byte = read(client_fd, cur_content + cur_byte, need_byte - cur_byte);
 
+		// SIGTERM
+		if (this->abort_flag_) {
+			break;
+		}
+
 		// Append content
 		if (read_byte > 0) {
 			cur_byte += read_byte;
 
-		// Close or EAGAIN or Error
+		// Close
+		} else if (read_byte == 0) {
+			break;
+
+		// EAGAIN or Error
 		} else {
 
 			// Interrupt other than SIGTERM, restart
-			if (read_byte == -1 && errno == EINTR && !this->abort_flag_) {
+			if (errno == EINTR) {
 				continue;
 			}
 			break;
@@ -396,6 +411,11 @@ void Server::WriteToClient(int client_fd) {
 	while (cur_byte < need_byte) {
 		write_byte = write(client_fd, cur_content + cur_byte, need_byte - cur_byte);
 
+		// SIGTERM
+		if (this->abort_flag_) {
+			break;
+		}
+
 		// Update remaining
 		if (write_byte > 0) {
 			cur_byte += write_byte;
@@ -404,7 +424,7 @@ void Server::WriteToClient(int client_fd) {
 		} else {
 
 			// Interrupt other than SIGTERM, restart
-			if (write_byte == -1 && errno == EINTR && !this->abort_flag_) {
+			if (write_byte == -1 && errno == EINTR) {
 				continue;
 			}
 			break;
