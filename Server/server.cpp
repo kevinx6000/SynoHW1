@@ -43,7 +43,6 @@ void Server::Initialize(int port) {
 	pthread_mutex_init(&this->served_mutex_, NULL);
 	pthread_mutex_init(&this->alive_mutex_, NULL);
 	pthread_mutex_init(&this->que_mutex_, NULL);
-	pthread_mutex_init(&this->content_mutex_, NULL);
 	pthread_cond_init(&this->que_not_empty_, NULL);
 }
 
@@ -172,13 +171,10 @@ bool Server::AcceptConnection(void) {
 						this->is_alive_[client_socket] = true;
 						pthread_mutex_unlock(&this->alive_mutex_);
 
-						// Update status to READ
-						char *str_buf = (char *)calloc(MAX_BUF, sizeof(char));
-						pthread_mutex_lock(&this->content_mutex_);
-						this->cur_status_[client_socket] = READ;
-						this->cur_byte_[client_socket] = 0;
-						this->cur_content_[client_socket] = str_buf;
-						pthread_mutex_unlock(&this->content_mutex_);
+						// Flush content and set status to READ
+						this->content_[client_socket].byte = 0;
+						this->content_[client_socket].str = (char *)calloc(MAX_BUF, sizeof(char));
+						this->content_[client_socket].status = READ;
 					}
 				}
 
@@ -273,9 +269,7 @@ void *Server::ServeClient(void *para) {
 		// Check current status
 		// If status is not consistent, should not serve it (discard event)
 		Status cur_status;
-		pthread_mutex_lock(&ptr->content_mutex_);
-		cur_status = ptr->cur_status_[jNode.fd];
-		pthread_mutex_unlock(&ptr->content_mutex_);
+		cur_status = ptr->content_[jNode.fd].status;
 		if ((cur_status == READ && !(jNode.events & EPOLLIN))
 			|| (cur_status == WRITE && !(jNode.events & EPOLLOUT))){
 
@@ -328,10 +322,8 @@ void Server::ReadFromClient(int client_fd) {
 	char *cur_content = NULL;
 
 	// Retrieve current content of string (read/write)
-	pthread_mutex_lock(&this->content_mutex_);
-	cur_byte = this->cur_byte_[client_fd];
-	cur_content = this->cur_content_[client_fd];
-	pthread_mutex_unlock(&this->content_mutex_);
+	cur_byte = this->content_[client_fd].byte;
+	cur_content = this->content_[client_fd].str;
 
 	// Read until byte reaches target
 	int need_byte = sizeof(char) * MAX_BUF;
@@ -375,22 +367,15 @@ void Server::ReadFromClient(int client_fd) {
 
 	// Read successfully
 	} else {
-		pthread_mutex_lock(&this->content_mutex_);
-
+		
 		// Not yet finished
 		if (cur_byte < need_byte) {
-			this->cur_byte_[client_fd] = cur_byte;
+			this->content_[client_fd].byte = cur_byte;
 
 		// Finished, change to WRITE mode
 		} else {
-			this->cur_status_[client_fd] = WRITE;
-			this->cur_byte_[client_fd] = 0;
-		}
-
-		pthread_mutex_unlock(&this->content_mutex_);
-
-		// Manually call WRITE if finished
-		if (cur_byte == need_byte) {
+			this->content_[client_fd].status = WRITE;
+			this->content_[client_fd].byte = 0;
 			this->WriteToClient(client_fd);
 		}
 	}
@@ -402,10 +387,8 @@ void Server::WriteToClient(int client_fd) {
 	char *cur_content = NULL;
 
 	// Retrieve current content of string (read/write)
-	pthread_mutex_lock(&this->content_mutex_);
-	cur_byte = this->cur_byte_[client_fd];
-	cur_content = this->cur_content_[client_fd];
-	pthread_mutex_unlock(&this->content_mutex_);
+	cur_byte = this->content_[client_fd].byte;
+	cur_content = this->content_[client_fd].str;
 
 	// Write until byte reaches target
 	int need_byte = sizeof(char) * MAX_BUF;
@@ -441,19 +424,16 @@ void Server::WriteToClient(int client_fd) {
 	// Write successfully
 	} else {
 		memset(cur_content, 0, sizeof(char) * MAX_BUF);
-		pthread_mutex_lock(&this->content_mutex_);
 
 		// Not yet finished
 		if (cur_byte < need_byte) {
-			this->cur_byte_[client_fd] = cur_byte;
+			this->content_[client_fd].byte = cur_byte;
 
 		// Finished, change to READ mode
 		} else {
-			this->cur_status_[client_fd] = READ;
-			this->cur_byte_[client_fd] = 0;
+			this->content_[client_fd].status = READ;
+			this->content_[client_fd].byte = 0;
 		}
-
-		pthread_mutex_unlock(&this->content_mutex_);
 	}
 }
 
@@ -466,13 +446,9 @@ bool Server::CloseClientSocket(int client_fd) {
 	pthread_mutex_unlock(&this->alive_mutex_);
 
 	// Free up content
-	char *str_tmp = NULL;
-	pthread_mutex_lock(&this->content_mutex_);
-	str_tmp = this->cur_content_[client_fd];
-	this->cur_content_[client_fd] = NULL;
-	pthread_mutex_unlock(&this->content_mutex_);
-	if (str_tmp != NULL) {
-		free(str_tmp);
+	if (this->content_[client_fd].str != NULL) {
+		free(this->content_[client_fd].str);
+		this->content_[client_fd].str = NULL;
 	}
 
 	// Close socket
@@ -526,6 +502,5 @@ Server::~Server(void) {
 	pthread_mutex_destroy(&this->served_mutex_);
 	pthread_mutex_destroy(&this->alive_mutex_);
 	pthread_mutex_destroy(&this->que_mutex_);
-	pthread_mutex_destroy(&this->content_mutex_);
 	pthread_cond_destroy(&this->que_not_empty_);
 }
