@@ -188,17 +188,25 @@ bool Server::AcceptConnection(void) {
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &ev) == -1) {
 						perror("[Warning] epoll_ctl: client socket");
 					} else {
-						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
+
+						// Cannot allocate enough memory
+						char *buf_tmp = (char *)calloc(MAX_BUF, sizeof(char));
+						if (buf_tmp == NULL) {
+							fprintf(stderr, "[Warning] Memory allocation failed for %d, close\n", client_socket);
+							close(client_socket);
+							continue;
+						}
+
+						// Flush content and set status to READ
+						this->content_[client_socket].byte = 0;
+						this->content_[client_socket].str = buf_tmp;
+						this->content_[client_socket].status = READ;
 
 						// Update alive mark
 						pthread_mutex_lock(&this->alive_mutex_);
 						this->is_alive_[client_socket] = true;
 						pthread_mutex_unlock(&this->alive_mutex_);
-
-						// Flush content and set status to READ
-						this->content_[client_socket].byte = 0;
-						this->content_[client_socket].str = (char *)calloc(MAX_BUF, sizeof(char));
-						this->content_[client_socket].status = READ;
+						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
 					}
 				}
 
@@ -443,7 +451,6 @@ void Server::WriteToClient(int client_fd) {
 
 	// Write successfully
 	} else {
-		memset(cur_content, 0, sizeof(char) * MAX_BUF);
 
 		// Not yet finished
 		if (cur_byte < need_byte) {
@@ -451,6 +458,7 @@ void Server::WriteToClient(int client_fd) {
 
 		// Finished, change to READ mode
 		} else {
+			memset(cur_content, 0, sizeof(char) * MAX_BUF);
 			this->content_[client_fd].status = READ;
 			this->content_[client_fd].byte = 0;
 		}

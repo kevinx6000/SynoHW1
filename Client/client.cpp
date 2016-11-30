@@ -139,6 +139,15 @@ bool Client::RecvString(std::string &output_string) {
 	int cur_byte = 0;
 	bool is_fail = false;
 	char *recv_string = (char *)calloc(Client::kMaxBuf, sizeof(char));
+
+	// Memory allocation fail
+	if (recv_string == NULL) {
+		fprintf(stderr, "[Error] Memory allocation fail\n");
+		fflush(stderr);
+		return false;
+	}
+
+	// Read
 	while (cur_byte < need_byte) {
 		read_byte = read(this->client_socket_, recv_string + cur_byte, need_byte - cur_byte);
 
@@ -182,14 +191,18 @@ bool Client::CloseSocket(void) {
 		return false;
 	} else {
 		fprintf(stderr, "[Info] Socket has been safely closed.\n");
-		client_socket_ = -1;
+		this->client_socket_ = -1;
 		return true;
 	}
 }
 
 // Destructor
 Client::~Client(void) {
-	// Do nothing
+
+	// Close client socket if not closed manually
+	if (this->client_socket_ != -1) {
+		this->CloseSocket();
+	}
 }
 
 // Get abort flag
