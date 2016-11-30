@@ -28,8 +28,7 @@ Client::Client(const char *IP, const int port) {
 void Client::Initialize(const char *IP, const int port) {
 	is_abort_ = false;
 	this->client_socket_ = -1;
-	this->server_IP_ = (char *)malloc(sizeof(char)*(strlen(IP)+1));
-	strcpy(this->server_IP_, IP);
+	this->server_IP_ = IP;
 	this->server_port_ = port;
 }
 
@@ -46,7 +45,7 @@ bool Client::CreateSocket(void) {
 	// Set server address
 	memset(&this->server_addr_, 0, sizeof(this->server_addr_));
 	this->server_addr_.sin_family = AF_INET;
-	this->server_addr_.sin_addr.s_addr = inet_addr(this->server_IP_);
+	this->server_addr_.sin_addr.s_addr = inet_addr(this->server_IP_.c_str());
 	this->server_addr_.sin_port = htons(this->server_port_);
 
 	// All pass
@@ -88,35 +87,34 @@ bool Client::SendAndRecv(const std::string &input, std::string &output) {
 // Send string to server
 bool Client::SendString(const std::string &input_string) {
 
-	// Check string length
-	if (input_string.length() >= kBufSiz) {
+	// Input length too long
+	if (input_string.length() >= Client::kMaxBuf) {
 		fprintf(stderr, "[Error] Length of input string is too long.\n");
 		return false;
+	
+	// Send it
 	} else {
 
 		// Send string directly
-		int need_byte = sizeof(char) * kBufSiz;
+		int need_byte = sizeof(char) * Client::kMaxBuf;
 		int write_byte = 0;
 		int cur_byte = 0;
-		char *send_string = (char *)calloc(kBufSiz, sizeof(char));
-		sprintf(send_string, "%s", input_string.c_str());
+		std::string send_string = input_string;
+		send_string.resize(Client::kMaxBuf, 0);
 		while (cur_byte < need_byte) {
-			write_byte = write(this->client_socket_, send_string + cur_byte, need_byte - cur_byte);
+			write_byte = write(this->client_socket_, send_string.c_str() + cur_byte, need_byte - cur_byte);
+
+			// SIGTERM
+			if (is_abort_) {
+				return false;
+			}
 
 			// Error
 			if (write_byte == -1) {
 
-				// Interrupt
+				// Interrupt other than SIGTERM: restart
 				if (errno == EINTR) {
-
-					// Other than SIGTERM, restart
-					if (!is_abort_) {
-						continue;
-
-					// SIGTERM, return
-					} else {
-						return false;
-					}
+					continue;
 
 				// Other fail
 				} else {
@@ -126,7 +124,6 @@ bool Client::SendString(const std::string &input_string) {
 			}
 			cur_byte += write_byte;
 		}
-		free(send_string);
 
 		// All pass
 		return true;
@@ -137,41 +134,54 @@ bool Client::SendString(const std::string &input_string) {
 bool Client::RecvString(std::string &output_string) {
 
 	// Receive string directly
-	int need_byte = sizeof(char) * kBufSiz;
+	int need_byte = sizeof(char) * Client::kMaxBuf;
 	int read_byte = 0;
 	int cur_byte = 0;
-	char *recv_string = (char *)calloc(kBufSiz, sizeof(char));
+	bool is_fail = false;
+	char *recv_string = (char *)calloc(Client::kMaxBuf, sizeof(char));
+
+	// Memory allocation fail
+	if (recv_string == NULL) {
+		fprintf(stderr, "[Error] Memory allocation fail\n");
+		fflush(stderr);
+		return false;
+	}
+
+	// Read
 	while (cur_byte < need_byte) {
 		read_byte = read(this->client_socket_, recv_string + cur_byte, need_byte - cur_byte);
+
+		// SIGTERM
+		if (is_abort_) {
+			is_fail = true;
+			break;
+		}
 
 		// Error
 		if (read_byte == -1) {
 
-			// Interrupt
+			// Interrupt other than SIGTERM
 			if (errno == EINTR) {
-
-				// Other than SIGTERM, restart
-				if (!is_abort_) {
-					continue;
-
-				// SIGTERM
-				} else {
-					return false;
-				}
+				continue;
 
 			// Other fail
 			} else {
 				perror("[Error] Read failed");
-				return false;
+				is_fail = true;
+				break;
 			}
 		}
 		cur_byte += read_byte;
 	}
-	output_string = recv_string;
+
+	// Copy output if not failed
+	if (!is_fail) {
+		output_string = recv_string;
+	}
 	free(recv_string);
 
-	// All pass
-	return true;
+	// Return result
+	return !is_fail;
 }
 
 // Close socket
@@ -181,7 +191,7 @@ bool Client::CloseSocket(void) {
 		return false;
 	} else {
 		fprintf(stderr, "[Info] Socket has been safely closed.\n");
-		client_socket_ = -1;
+		this->client_socket_ = -1;
 		return true;
 	}
 }
@@ -189,8 +199,10 @@ bool Client::CloseSocket(void) {
 // Destructor
 Client::~Client(void) {
 
-	// Destroy old variables
-	free(this->server_IP_);
+	// Close client socket if not closed manually
+	if (this->client_socket_ != -1) {
+		this->CloseSocket();
+	}
 }
 
 // Get abort flag

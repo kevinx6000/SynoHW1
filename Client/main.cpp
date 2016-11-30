@@ -11,16 +11,15 @@
 #include <iostream>
 #include <string>
 
-#define MAX_LEN 1023
 #define MAX_EVENT 100
 
 // Global variables
 bool is_sigterm;
 
 // Function prototype
-bool RegisterSignal(void);
-void SignalHandler(int);
-void *ClientThread(void *);
+static bool RegisterSignal(void);
+static void SignalHandler(int);
+static void *ClientThread(void *);
 
 int main(int argc, char *argv[]) {
 
@@ -41,7 +40,7 @@ int main(int argc, char *argv[]) {
 
 	// Wait on SIGTERM
 	while (!is_sigterm) {
-		sleep(3);
+		sleep(1);
 	}
 
 	// Inform server SIGTERM
@@ -108,7 +107,7 @@ void *ClientThread(void *para) {
 
 	// Wait for user to input string
 	int numFD = 1;
-	char input_string[MAX_LEN];
+	char input_string[Client::kMaxBuf];
 	std::string output_string;
 	struct epoll_event events[MAX_EVENT];
 	while (!client->GetAbortFlag()) {
@@ -120,18 +119,21 @@ void *ClientThread(void *para) {
 		}
 
 		// Wait until stdin is ready, or abort
-		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 3000);
-		if (numFD == -1 && !client->GetAbortFlag()) {
+		numFD = epoll_wait(epoll_fd, events, MAX_EVENT, 2000);
+		if (client->GetAbortFlag()) {
+			break;
+		}
+		if (numFD == -1) {
 			perror("[Error] epoll_wait");
-			pthread_exit(NULL);
+			break;
 		}
 
 		// stdin ready
-		for (int i = 0; i < numFD && !client->GetAbortFlag(); i++) {
+		for (int i = 0; i < numFD; i++) {
 
 			// Read from stdin
-			memset(input_string, 0, sizeof(char) * MAX_LEN);
-			fgets(input_string, MAX_LEN, stdin);
+			memset(input_string, 0, sizeof(char) * Client::kMaxBuf);
+			fgets(input_string, Client::kMaxBuf, stdin);
 	
 			// Prune '\n'
 			input_string[strlen(input_string)-1] = '\0';

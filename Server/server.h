@@ -5,6 +5,7 @@
 #define MAX_EVENT 20010
 #define MAX_THREAD 1000
 #define MAX_BUF 1023
+#define MAX_FD 65536
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -41,6 +42,13 @@ class Server {
 			WRITE
 		};
 
+		// Content of client
+		typedef struct {
+			int byte;
+			char *str;
+			Status status;
+		}Content;
+
 	private:
 		void Initialize(int);
 		void ReadFromClient(int);
@@ -74,10 +82,7 @@ class Server {
 		pthread_cond_t que_not_empty_;
 
 		// Current content received from client fd
-		pthread_mutex_t content_mutex_;
-		std::map<unsigned int, char *>cur_content_;
-		std::map<unsigned int, Status>cur_status_;
-		std::map<unsigned int, int>cur_byte_;
+		Content content_[MAX_FD];
 };
 
 #endif

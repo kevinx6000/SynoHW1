@@ -43,8 +43,24 @@ void Server::Initialize(int port) {
 	pthread_mutex_init(&this->served_mutex_, NULL);
 	pthread_mutex_init(&this->alive_mutex_, NULL);
 	pthread_mutex_init(&this->que_mutex_, NULL);
-	pthread_mutex_init(&this->content_mutex_, NULL);
 	pthread_cond_init(&this->que_not_empty_, NULL);
+}
+
+// Make file descriptor to nonblocking
+bool Server::MakeNonblocking(int fd) {
+
+	// Get current flag
+	int file_flags = fcntl(fd, F_GETFL, 0);
+	if (file_flags == -1) {
+		perror("[Error] Get socket flags failed");
+		return false;
+	}
+	file_flags |= O_NONBLOCK;
+	if (fcntl(fd, F_SETFL, file_flags) == -1) {
+		perror("[Error] Set socket as non-blocking failed");
+		return false;
+	}
+	return true;
 }
 
 // Create socket
@@ -153,6 +169,13 @@ bool Server::AcceptConnection(void) {
 				while ((client_socket = accept(this->server_socket_, 
 						(struct sockaddr *) &client_addr, &addrlen)) >= 0) {
 
+					// Exceed maximum available fd, close
+					if (client_socket >= MAX_FD) {
+						fprintf(stderr, "[Warning] fd >= %d, socket closed.\n", MAX_FD);
+						close(client_socket);
+						continue;
+					}
+
 					// Make client socket into non-blocking
 					if (!MakeNonblocking(client_socket)) {
 						close(client_socket);
@@ -165,26 +188,30 @@ bool Server::AcceptConnection(void) {
 					if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &ev) == -1) {
 						perror("[Warning] epoll_ctl: client socket");
 					} else {
-						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
+
+						// Cannot allocate enough memory
+						char *buf_tmp = (char *)calloc(MAX_BUF, sizeof(char));
+						if (buf_tmp == NULL) {
+							fprintf(stderr, "[Warning] Memory allocation failed for %d, close\n", client_socket);
+							close(client_socket);
+							continue;
+						}
+
+						// Flush content and set status to READ
+						this->content_[client_socket].byte = 0;
+						this->content_[client_socket].str = buf_tmp;
+						this->content_[client_socket].status = READ;
 
 						// Update alive mark
 						pthread_mutex_lock(&this->alive_mutex_);
 						this->is_alive_[client_socket] = true;
 						pthread_mutex_unlock(&this->alive_mutex_);
-
-						// Update status to READ
-						char *str_buf = (char *)calloc(MAX_BUF, sizeof(char));
-						pthread_mutex_lock(&this->content_mutex_);
-						this->cur_status_[client_socket] = READ;
-						this->cur_byte_[client_socket] = 0;
-						this->cur_content_[client_socket] = str_buf;
-						pthread_mutex_unlock(&this->content_mutex_);
+						fprintf(stderr, "[Info] Client %d accepted.\n", client_socket);
 					}
 				}
 
-				// Reach end (client_socket == -1) or error
-				if (errno == EAGAIN || errno == EWOULDBLOCK) {continue;}
-				else {
+				// Error other than EAGAIN and EWOULDBLOCK
+				if (errno != EAGAIN && errno != EWOULDBLOCK) {
 					perror("[Error] Accept failed");
 				}
 
@@ -273,9 +300,7 @@ void *Server::ServeClient(void *para) {
 		// Check current status
 		// If status is not consistent, should not serve it (discard event)
 		Status cur_status;
-		pthread_mutex_lock(&ptr->content_mutex_);
-		cur_status = ptr->cur_status_[jNode.fd];
-		pthread_mutex_unlock(&ptr->content_mutex_);
+		cur_status = ptr->content_[jNode.fd].status;
 		if ((cur_status == READ && !(jNode.events & EPOLLIN))
 			|| (cur_status == WRITE && !(jNode.events & EPOLLOUT))){
 
@@ -305,33 +330,14 @@ void *Server::ServeClient(void *para) {
 	pthread_exit(NULL);
 }
 
-// Make file descriptor to nonblocking
-bool Server::MakeNonblocking(int fd) {
-
-	// Get current flag
-	int file_flags = fcntl(fd, F_GETFL, 0);
-	if (file_flags == -1) {
-		perror("[Error] Get socket flags failed");
-		return false;
-	}
-	file_flags |= O_NONBLOCK;
-	if (fcntl(fd, F_SETFL, file_flags) == -1) {
-		perror("[Error] Set socket as non-blocking failed");
-		return false;
-	}
-	return true;
-}
-
 // Read string from client
 void Server::ReadFromClient(int client_fd) {
 	int cur_byte = 0;
 	char *cur_content = NULL;
 
 	// Retrieve current content of string (read/write)
-	pthread_mutex_lock(&this->content_mutex_);
-	cur_byte = this->cur_byte_[client_fd];
-	cur_content = this->cur_content_[client_fd];
-	pthread_mutex_unlock(&this->content_mutex_);
+	cur_byte = this->content_[client_fd].byte;
+	cur_content = this->content_[client_fd].str;
 
 	// Read until byte reaches target
 	int need_byte = sizeof(char) * MAX_BUF;
@@ -339,15 +345,24 @@ void Server::ReadFromClient(int client_fd) {
 	while (cur_byte < need_byte) {
 		read_byte = read(client_fd, cur_content + cur_byte, need_byte - cur_byte);
 
+		// SIGTERM
+		if (this->abort_flag_) {
+			break;
+		}
+
 		// Append content
 		if (read_byte > 0) {
 			cur_byte += read_byte;
 
-		// Close or EAGAIN or Error
+		// Close
+		} else if (read_byte == 0) {
+			break;
+
+		// EAGAIN or Error
 		} else {
 
 			// Interrupt other than SIGTERM, restart
-			if (read_byte == -1 && errno == EINTR && !this->abort_flag_) {
+			if (errno == EINTR) {
 				continue;
 			}
 			break;
@@ -375,22 +390,15 @@ void Server::ReadFromClient(int client_fd) {
 
 	// Read successfully
 	} else {
-		pthread_mutex_lock(&this->content_mutex_);
-
+		
 		// Not yet finished
 		if (cur_byte < need_byte) {
-			this->cur_byte_[client_fd] = cur_byte;
+			this->content_[client_fd].byte = cur_byte;
 
 		// Finished, change to WRITE mode
 		} else {
-			this->cur_status_[client_fd] = WRITE;
-			this->cur_byte_[client_fd] = 0;
-		}
-
-		pthread_mutex_unlock(&this->content_mutex_);
-
-		// Manually call WRITE if finished
-		if (cur_byte == need_byte) {
+			this->content_[client_fd].status = WRITE;
+			this->content_[client_fd].byte = 0;
 			this->WriteToClient(client_fd);
 		}
 	}
@@ -402,16 +410,19 @@ void Server::WriteToClient(int client_fd) {
 	char *cur_content = NULL;
 
 	// Retrieve current content of string (read/write)
-	pthread_mutex_lock(&this->content_mutex_);
-	cur_byte = this->cur_byte_[client_fd];
-	cur_content = this->cur_content_[client_fd];
-	pthread_mutex_unlock(&this->content_mutex_);
+	cur_byte = this->content_[client_fd].byte;
+	cur_content = this->content_[client_fd].str;
 
 	// Write until byte reaches target
 	int need_byte = sizeof(char) * MAX_BUF;
 	int write_byte = 0;
 	while (cur_byte < need_byte) {
 		write_byte = write(client_fd, cur_content + cur_byte, need_byte - cur_byte);
+
+		// SIGTERM
+		if (this->abort_flag_) {
+			break;
+		}
 
 		// Update remaining
 		if (write_byte > 0) {
@@ -421,7 +432,7 @@ void Server::WriteToClient(int client_fd) {
 		} else {
 
 			// Interrupt other than SIGTERM, restart
-			if (write_byte == -1 && errno == EINTR && !this->abort_flag_) {
+			if (write_byte == -1 && errno == EINTR) {
 				continue;
 			}
 			break;
@@ -440,20 +451,17 @@ void Server::WriteToClient(int client_fd) {
 
 	// Write successfully
 	} else {
-		memset(cur_content, 0, sizeof(char) * MAX_BUF);
-		pthread_mutex_lock(&this->content_mutex_);
 
 		// Not yet finished
 		if (cur_byte < need_byte) {
-			this->cur_byte_[client_fd] = cur_byte;
+			this->content_[client_fd].byte = cur_byte;
 
 		// Finished, change to READ mode
 		} else {
-			this->cur_status_[client_fd] = READ;
-			this->cur_byte_[client_fd] = 0;
+			memset(cur_content, 0, sizeof(char) * MAX_BUF);
+			this->content_[client_fd].status = READ;
+			this->content_[client_fd].byte = 0;
 		}
-
-		pthread_mutex_unlock(&this->content_mutex_);
 	}
 }
 
@@ -466,13 +474,9 @@ bool Server::CloseClientSocket(int client_fd) {
 	pthread_mutex_unlock(&this->alive_mutex_);
 
 	// Free up content
-	char *str_tmp = NULL;
-	pthread_mutex_lock(&this->content_mutex_);
-	str_tmp = this->cur_content_[client_fd];
-	this->cur_content_[client_fd] = NULL;
-	pthread_mutex_unlock(&this->content_mutex_);
-	if (str_tmp != NULL) {
-		free(str_tmp);
+	if (this->content_[client_fd].str != NULL) {
+		free(this->content_[client_fd].str);
+		this->content_[client_fd].str = NULL;
 	}
 
 	// Close socket
@@ -526,6 +530,5 @@ Server::~Server(void) {
 	pthread_mutex_destroy(&this->served_mutex_);
 	pthread_mutex_destroy(&this->alive_mutex_);
 	pthread_mutex_destroy(&this->que_mutex_);
-	pthread_mutex_destroy(&this->content_mutex_);
 	pthread_cond_destroy(&this->que_not_empty_);
 }
